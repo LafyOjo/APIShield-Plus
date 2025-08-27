@@ -1,0 +1,57 @@
+#––– Python / FastAPI ––––––––––––––––––––––––––––––––
+# Virtual-envs
+backend/.venv/
+.venv/
+venv/
+ENV/
+env/
+# Byte-code & compiled files
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+# Local settings / secrets
+backend/.env
+server.key
+server.crt
+*.sqlite3
+*.db
+
+#––– Node / React frontend –––––––––––––––––––––––––––
+frontend/node_modules/
+frontend/dist/
+node_modules/
+/package.json
+/package-lock.json
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+#––– IDE / Editor junk –––––––––––––––––––––––––––––––
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+#––– Docker / Kubernetes artifacts –––––––––––––––––––
+# (images and volumes can be huge; keep YAML/Helm only)
+**/tmp/
+**/cache/
+# Docker build cache if you ever use BuildKit
+**/.docker
+
+#––– Coverage / test output ––––––––––––––––––––––––––
+htmlcov/
+coverage.xml
+pytest.cache/
+
+#––– Reports / docs build output –––––––––––––––––––––
+docs/_build/
+docs/screenshots/**/thumbs/
+
+#––– OS-specific ––––––––––––––––––––––––––––––––––––
+Thumbs.db
+ehthumbs.db

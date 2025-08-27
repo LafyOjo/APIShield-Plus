@@ -1,0 +1,9 @@
+{
+  "shopName": "My Awesome Demo Shop",
+  "apiBaseUrl": "http://localhost:8001",
+  "currencySymbol": "$",
+  "features": {
+    "enableDiscounts": true,
+    "enableReviews": false
+  }
+}

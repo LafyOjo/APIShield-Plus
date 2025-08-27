@@ -1,0 +1,385 @@
+/* ============================================================
+   Global theme variables
+   ------------------------------------------------------------
+   Central place to tweak colors and tones for the whole app.
+   Using CSS variables means we can theme quickly without
+   hunting down individual rules across the file.
+   ============================================================ */
+:root {
+  --bg: #ffffff;
+  --text: #0f172a;
+  --muted: #6b7280;
+  --brand: #0ea5e9;
+  --brand-2: #22c55e;
+  --card: #f8fafc;
+  --border: #e5e7eb;
+}
+
+/* ============================================================
+   Base element resets and typography
+   ------------------------------------------------------------
+   Keep defaults predictable: box-sizing for layout sanity,
+   zero out margins, and set a modern system font stack.
+   This gives a clean, consistent starting point.
+   ============================================================ */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  background: var(--bg);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    Inter,
+    "Helvetica Neue",
+    Arial,
+    "Apple Color Emoji",
+    "Segoe UI Emoji";
+}
+
+/* ============================================================
+   Layout helpers: container, rows, and stacks
+   ------------------------------------------------------------
+   Lightweight utilities for consistent page structure.
+   Container centers content; row aligns items horizontally;
+   stack gives vertical rhythm with even gaps.
+   ============================================================ */
+.container {
+  width: min(1100px, 92%);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.stack {
+  display: grid;
+  gap: 1rem;
+}
+
+/* ============================================================
+   Site header and navigation
+   ------------------------------------------------------------
+   Sticky header with a subtle blur and border for depth.
+   Navigation uses simple buttons/links that highlight on hover
+   to keep the UI feeling responsive and clean.
+   ============================================================ */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: saturate(140%) blur(6px);
+
+  border-bottom: 1px solid var(--border);
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  padding: 0.75rem 0;
+}
+
+.brand {
+  font-weight: 800;
+  letter-spacing: 0.4px;
+}
+
+.brand span {
+  color: var(--brand);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* ============================================================
+   Link and button primitives
+   ------------------------------------------------------------
+   Links are styled like quiet buttons for consistency.
+   Buttons have rounded pills and a simple hover effect that
+   nudges brightness for a quick, accessible affordance.
+   ============================================================ */
+.link {
+  cursor: pointer;
+
+  background: transparent;
+  border: 0;
+
+  color: var(--text);
+  padding: 0.5rem 0.75rem;
+}
+
+.link:hover {
+  color: var(--brand);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.icon {
+  cursor: pointer;
+
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+
+  padding: 0.4rem 0.65rem;
+}
+
+.badge {
+  background: var(--brand);
+  color: #fff;
+
+  font-size: 0.8rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+}
+
+.btn {
+  cursor: pointer;
+
+  background: var(--brand);
+  color: #fff;
+
+  padding: 0.6rem 1rem;
+  border: 0;
+  border-radius: 999px;
+
+  font-weight: 600;
+}
+
+.btn.ghost {
+  background: transparent;
+  color: var(--text);
+
+  border: 1px solid var(--border);
+}
+
+.btn:hover {
+  filter: brightness(0.95);
+}
+
+/* ============================================================
+   Hero (header media area)
+   ------------------------------------------------------------
+   Large visual section that anchors the page. We use a gradient
+   overlay for text legibility and clamp font sizes so it scales
+   nicely from mobile to desktop.
+   ============================================================ */
+.hero {
+  position: relative;
+  overflow: hidden;
+
+  height: 64vh;
+  min-height: 420px;
+
+  border-bottom: 1px solid var(--border);
+}
+
+.hero video {
+  display: block;
+
+  width: 100%;
+  height: 100%;
+
+  object-fit: cover;
+}
+
+.hero-overlay {
+  position: absolute;
+  inset: 0;
+
+  display: grid;
+  align-content: end;
+
+  padding: 2.5rem;
+  color: #fff;
+
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.35));
+}
+
+.hero .eyebrow {
+  margin: 0 0 0.5rem;
+
+  font-size: 0.75rem;
+  letter-spacing: 0.2em;
+  opacity: 0.85;
+}
+
+.hero h1 {
+  margin: 0.25rem 0 1rem;
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
+}
+
+/* ============================================================
+   Cards, grids, and product tiles
+   ------------------------------------------------------------
+   Cards soften content blocks; grids auto-fill responsive
+   columns; product tiles keep imagery consistent with an
+   aspect-ratio and tidy spacing for titles/prices.
+   ============================================================ */
+.card {
+  background: var(--card);
+
+  padding: 1rem;
+
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+.grid {
+  display: grid;
+  gap: 1rem;
+
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.product {
+  display: grid;
+  overflow: hidden;
+
+  background: #fff;
+
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.product .img {
+  overflow: hidden;
+
+  aspect-ratio: 4 / 3;
+  background: #f3f4f6;
+}
+
+.product .img img {
+  display: block;
+
+  width: 100%;
+  height: 100%;
+
+  object-fit: cover;
+}
+
+.product .body {
+  display: grid;
+  gap: 0.25rem;
+
+  padding: 0.8rem;
+}
+
+.product .title {
+  font-weight: 600;
+}
+
+.product .price {
+  color: var(--muted);
+}
+
+/* ============================================================
+   Tables
+   ------------------------------------------------------------
+   A minimal table style: subtle borders, left-aligned headers,
+   and a tidy right-aligned last column for numeric values.
+   ============================================================ */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  padding: 0.6rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.table th {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.table td:last-child {
+  text-align: right;
+}
+
+/* ============================================================
+   Alerts and footer
+   ------------------------------------------------------------
+   Alerts use soft backgrounds and readable contrast. The footer
+   mirrors the header’s border to visually bookend each page.
+   ============================================================ */
+.alert {
+  background: #eef6ff;
+  color: #07467a;
+
+  padding: 0.6rem 0.9rem;
+  border-radius: 12px;
+}
+
+.alert.alert-danger {
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+
+.site-footer {
+  margin-top: 3rem;
+  padding: 1.25rem 0;
+
+  border-top: 1px solid var(--border);
+}
+
+/* ============================================================
+   Form styles
+   ------------------------------------------------------------
+   Clean, predictable form controls with good spacing and clear
+   labels. Keeps inputs legible and touch-friendly on mobile.
+   ============================================================ */
+.muted {
+  color: var(--muted);
+}
+
+.form .field {
+  margin-bottom: 0.75rem;
+}
+
+.form label {
+  display: block;
+
+  margin-bottom: 0.25rem;
+
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.form input {
+  width: 100%;
+
+  padding: 0.6rem 0.7rem;
+
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+
+  color: var(--text);
+  font: inherit;
+}

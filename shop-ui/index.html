@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Demo Shop</title>
+
+  <!-- Main site stylesheet -->
+  <link rel="stylesheet" href="/style.css" />
+
+  <!-- Expose APIShield key to JS for audit logging to /api/audit/log (demo only).
+       In a real app this wouldn’t be hard-coded into HTML for security reasons. -->
+  <meta name="apishield-key" content="demo-key" />
+</head>
+<body>
+  <!-- ======================================================
+       Site Header: navigation, branding, and quick actions
+       ------------------------------------------------------
+       Stays sticky at the top with links for shopping and
+       user actions (cart, login/logout, stats).
+       ====================================================== -->
+  <header class="site-header">
+    <div class="container header-inner">
+      <!-- Logo/brand -->
+      <div class="brand">Demo<span>Shop</span></div>
+
+      <!-- Navigation menu -->
+      <nav class="nav">
+        <button id="homeBtn" class="link">Home</button>
+        <button id="menBtn" class="link">Men</button>
+        <button id="womenBtn" class="link">Women</button>
+        <button id="accessBtn" class="link">Accessories</button>
+        <button id="servicesBtn" class="link">Services</button>
+        <button id="contactBtn" class="link">Contact</button>
+      </nav>
+
+      <!-- Action buttons (cart, profile, login/logout) -->
+      <div class="actions">
+        <button id="statsBtn" class="icon" title="API Calls">📈</button>
+        <button id="cartBtn" class="icon" title="Cart">
+          🛒 <span id="cartCount" class="badge">0</span>
+        </button>
+        <button id="profileBtn" class="link">Profile</button>
+        <button id="loginBtn" class="btn">Login</button>
+        <button id="logoutBtn" class="btn ghost" style="display:none">Logout</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ======================================================
+       Hero Section: main promotional banner
+       ------------------------------------------------------
+       Includes autoplay looping video and a marketing message
+       with calls-to-action to shop Men/Women collections.
+       ====================================================== -->
+  <section id="hero" class="hero">
+    <video id="heroVideo" autoplay muted loop playsinline
+           poster="./video/5743177-uhd_4096_2160_25fps.mp4">
+      <source src="./video/5743177-uhd_4096_2160_25fps.mp4" type="video/mp4" />
+    </video>
+
+    <div class="hero-overlay">
+      <p class="eyebrow">THE NEW TREE RUNNER NZ AND CRUISER</p>
+      <h1>New shoes, (even) more comfort.</h1>
+      <div class="row">
+        <button id="shopMenBtn" class="btn">Shop Men</button>
+        <button id="shopWomenBtn" class="btn ghost">Shop Women</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================================================
+       Main Content Area
+       ------------------------------------------------------
+       Holds alerts/messages and dynamic product/category
+       content that will be injected by app.js.
+       ====================================================== -->
+  <main class="container">
+    <!-- Placeholder for temporary system messages -->
+    <div id="message" class="alert" style="display:none"></div>
+
+    <!-- Dynamic content gets injected here -->
+    <div id="content" class="stack"></div>
+  </main>
+
+  <!-- ======================================================
+       Site Footer
+       ------------------------------------------------------
+       Provides simple attribution and matches header style.
+       ====================================================== -->
+  <footer class="site-footer">
+    <div class="container">
+      <p class="muted">© Demo Shop • Built for APIShield+ demos</p>
+    </div>
+  </footer>
+
+  <!-- ======================================================
+       Scripts
+       ------------------------------------------------------
+       - Expose APIShield key for frontend JS
+       - Load app.js for page interactivity
+       ====================================================== -->
+  <script>
+    window.APISHIELD_KEY = document.querySelector('meta[name="apishield-key"]').content || 'demo-key';
+  </script>
+  <script src="/app.js"></script>
+</body>
+</html>

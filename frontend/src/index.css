@@ -1,0 +1,154 @@
+/* ===== Reset & Base ===== */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body { margin: 0; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+img, svg { display: block; max-width: 100%; }
+button { font: inherit; }
+
+/* ===== Design Tokens ===== */
+:root {
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, "Fira Sans", "Droid Sans", "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  --brand: #5b6cff;             /* Indigo-ish primary */
+  --brand-ink: #1f2937;         /* Neutral heading/body ink */
+  --accent: #22c55e;            /* Success */
+  --warn: #f59e0b;              /* Warning */
+  --danger: #ef4444;            /* Danger */
+
+  --bg: #f7f8fa;
+  --panel: #ffffff;
+  --muted: #6b7280;             /* secondary text */
+  --border: #e5e7eb;
+  --shadow: 0 10px 20px rgba(0,0,0,0.06), 0 2px 6px rgba(0,0,0,0.04);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+
+  --space-1: .25rem;
+  --space-2: .5rem;
+  --space-3: .75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  --font-12: .75rem;
+  --font-14: .875rem;
+  --font-16: 1rem;
+  --font-18: 1.125rem;
+  --font-20: 1.25rem;
+  --font-24: 1.5rem;
+  --font-30: 1.875rem;
+}
+
+/* Dark theme (opt-in + system) */
+@media (prefers-color-scheme: dark) {
+  :root:not(.theme-light) {
+    --bg: #0b1020;
+    --panel: #12182a;
+    --brand-ink: #e5e7eb;
+    --muted: #94a3b8;
+    --border: #1f2a44;
+    --shadow: 0 10px 20px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.3);
+  }
+}
+.theme-dark {
+  --bg: #0b1020;
+  --panel: #12182a;
+  --brand-ink: #e5e7eb;
+  --muted: #94a3b8;
+  --border: #1f2a44;
+  --shadow: 0 10px 20px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.3);
+}
+
+body {
+  background: var(--bg);
+  color: var(--brand-ink);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+}
+
+/* ===== Layout Helpers ===== */
+.container { max-width: 1100px; margin-inline: auto; padding: var(--space-8) var(--space-4); }
+.stack { display: grid; gap: var(--space-6); }
+.row { display: flex; gap: var(--space-4); align-items: center; flex-wrap: wrap; }
+
+/* ===== Surface / Card ===== */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: var(--space-6);
+}
+.card-header { display:flex; justify-content: space-between; align-items:center; margin-bottom: var(--space-4); }
+.card-title { font-size: var(--font-20); font-weight: 700; }
+.subtle { color: var(--muted); font-size: var(--font-14); }
+
+/* ===== Buttons ===== */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+  padding: .6rem 1rem; border-radius: var(--radius-sm); border: 1px solid transparent;
+  background: var(--brand); color: #fff; font-weight: 600; cursor: pointer;
+  box-shadow: 0 2px 8px rgba(91,108,255,.35);
+  transition: transform .04s ease, box-shadow .2s ease, background .2s ease;
+}
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+.btn.secondary { background: transparent; color: var(--brand-ink); border-color: var(--border); }
+.btn.ghost { background: transparent; color: var(--brand); border-color: transparent; }
+.btn.danger { background: var(--danger); box-shadow: 0 2px 8px rgba(239,68,68,.35); }
+.btn.success { background: var(--accent); box-shadow: 0 2px 8px rgba(34,197,94,.35); }
+
+/* ===== Inputs / Forms ===== */
+.form { display:grid; gap: var(--space-4); }
+.field { display:grid; gap:.4rem; }
+.label { font-weight: 600; font-size: var(--font-14); color: var(--muted); }
+.input, .select, .textarea {
+  width: 100%; font-size: var(--font-16);
+  padding: .65rem .75rem; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--panel); color: var(--brand-ink);
+  outline: none;
+}
+.input:focus, .select:focus, .textarea:focus {
+  border-color: color-mix(in oklab, var(--brand) 40%, var(--border));
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--brand) 20%, transparent);
+}
+.help { font-size: var(--font-12); color: var(--muted); }
+
+/* ===== Tables ===== */
+.table {
+  width: 100%; border-collapse: collapse; border: 1px solid var(--border);
+  background: var(--panel); border-radius: var(--radius-lg); overflow: hidden;
+}
+.table th, .table td {
+  padding: .85rem 1.15rem;
+  text-align: left;
+  margin: 0.1rem;
+  font-size: calc(var(--font-16) + 1pt);
+}
+.table thead th {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--brand) 24%, var(--panel)) 0%, color-mix(in oklab, var(--brand) 12%, var(--panel)) 100%);
+  color: #fff; position: sticky; top:0; z-index:1;
+}
+.table tbody tr { border-top: 1px solid var(--border); }
+.table tbody tr:nth-child(odd) { background: color-mix(in oklab, var(--panel) 80%, var(--bg)); }
+.table tbody tr:hover { background: color-mix(in oklab, var(--brand) 6%, var(--panel)); }
+.badge { padding: .25rem .5rem; border-radius: 999px; font-size: var(--font-12); font-weight:700; }
+.badge.success { background: color-mix(in oklab, var(--accent) 20%, transparent); color: var(--accent); }
+.badge.danger { background: color-mix(in oklab, var(--danger) 20%, transparent); color: var(--danger); }
+
+/* ===== Navbar / Footer (shared look) ===== */
+.navbar {
+  background: linear-gradient(180deg, #0b1020 0%, #12182a 100%);
+  color: #fff; border-bottom: 1px solid var(--border); box-shadow: var(--shadow);
+}
+.navbar .inner { max-width: 1100px; margin-inline: auto; padding: .85rem var(--space-4); display:flex; gap: var(--space-4); align-items:center; justify-content: space-between; }
+.brand { display:flex; gap:.6rem; align-items:center; font-weight: 800; font-size: var(--font-20); letter-spacing:.3px; }
+.brand-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--brand); box-shadow: 0 4px 14px rgba(91,108,255,.45); }
+
+/* ===== Utility ===== */
+.muted { color: var(--muted); }
+.center { display: grid; place-items: center; }
+.spacer { height: var(--space-6); }

@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: detector
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: detector
+  template:
+    metadata:
+      labels:
+        app: detector
+    spec:
+      containers:
+      - name: detector
+        image: detector:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: detector-env
+              key: SECRET_KEY
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: detector-env
+              key: DATABASE_URL
+        - name: ZERO_TRUST_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: detector-env
+              key: ZERO_TRUST_API_KEY
+        args:
+          - uvicorn
+          - app.main:app
+          - --host
+          - 0.0.0.0
+          - --port
+          - "8001"
+          - --ssl-keyfile
+          - /certs/tls.key
+          - --ssl-certfile
+          - /certs/tls.crt
+        ports:
+        - name: http-metrics
+          containerPort: 8001
+        volumeMounts:
+        - name: tls
+          mountPath: /certs
+          readOnly: true
+      volumes:
+      - name: tls
+        secret:
+          secretName: detector-tls

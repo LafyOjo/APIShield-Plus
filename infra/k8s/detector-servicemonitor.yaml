@@ -1,0 +1,23 @@
+# detector-servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: detector
+  namespace: monitoring            # Prometheus stack namespace
+  labels:
+    release: kube-prom             # must match your kube-prometheus-stack release label
+spec:
+  selector:
+    matchLabels:
+      app: detector                # must match labels on the Service
+  namespaceSelector:
+    matchNames:
+      - demo                       # namespace where the Service lives
+  endpoints:
+    - port: http-metrics           # MUST equal the Service port *name*
+      path: /metrics
+      interval: 15s
+      scheme: https                # your app serves HTTPS in-cluster
+      tlsConfig:
+        insecureSkipVerify: true   # self-signed; switch to caFile if you add a CA
+      honorLabels: true
