@@ -181,11 +181,12 @@ def login(user_in: UserCreate, request: Request, db: Session = Depends(get_db)):
 
     # Verify credentials
     if not user or not verify_password(user_in.password, user.password_hash):
-        log_event(db, tenant_id, user_in.username, "login", False)
+        log_event(db, tenant_id, user_in.username, "login", False, request=request)
         record_attempt(
             db,
-            request.client.host,
+            getattr(request.state, "client_ip", None),
             False,
+            request=request,
             user_id=user.id if user else None,
             fail_limit=fail_limit,
             tenant_id=tenant_id,
@@ -202,11 +203,12 @@ def login(user_in: UserCreate, request: Request, db: Session = Depends(get_db)):
         data={"sub": user.username, "memberships": membership_snapshot},
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
-    log_event(db, tenant_id, user.username, "login", True)
+    log_event(db, tenant_id, user.username, "login", True, request=request)
     record_attempt(
         db,
-        request.client.host,
+        getattr(request.state, "client_ip", None),
         True,
+        request=request,
         user_id=user.id,
         fail_limit=fail_limit,
         tenant_id=tenant_id,
@@ -223,7 +225,7 @@ def login(user_in: UserCreate, request: Request, db: Session = Depends(get_db)):
             )
         except Exception:
             # Don’t break auth if DemoShop is down — just log it
-            log_event(db, tenant_id, user.username, "shop_login_error", False)
+            log_event(db, tenant_id, user.username, "shop_login_error", False, request=request)
 
     return {"access_token": token, "token_type": "bearer"}
 
@@ -240,7 +242,7 @@ async def login_for_access_token(
     user = get_user_by_username(db, form_data.username)
     tenant_id = _resolve_tenant_id_for_user(db, request, user)
     if not user or not verify_password(form_data.password, user.password_hash):
-        log_event(db, tenant_id, form_data.username, "token", False)
+        log_event(db, tenant_id, form_data.username, "token", False, request=request)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -251,7 +253,7 @@ async def login_for_access_token(
         data={"sub": user.username, "memberships": _membership_snapshot(db, user.id)},
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
-    log_event(db, tenant_id, user.username, "token", True)
+    log_event(db, tenant_id, user.username, "token", True, request=request)
     return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -288,5 +290,5 @@ async def logout(
         # If revoke fails, don’t crash — just mark unsuccessful
         pass
     tenant_id = _resolve_tenant_id_for_user(db, request, current_user)
-    log_event(db, tenant_id, current_user.username, "logout", success)
+    log_event(db, tenant_id, current_user.username, "logout", success, request=request)
     return {"detail": "Logged out"}

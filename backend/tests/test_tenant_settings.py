@@ -57,7 +57,9 @@ def test_settings_auto_created_for_tenant():
         )
         assert settings_row is not None
         assert settings_row.timezone == "UTC"
-        assert settings_row.retention_days == 7
+        assert settings_row.retention_days == 30
+        assert settings_row.event_retention_days == 30
+        assert settings_row.ip_raw_retention_days == 7
 
 
 def test_update_settings_requires_admin_or_owner():

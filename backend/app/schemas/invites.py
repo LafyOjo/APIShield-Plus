@@ -12,7 +12,7 @@ class InviteCreate(BaseModel):
 
     @validator("email")
     def normalize_email(cls, value: EmailStr) -> EmailStr:
-        return EmailStr(value.lower())
+        return value.lower()
 
 
 class InviteRead(BaseModel):
@@ -33,7 +33,7 @@ class InviteCreatedResponse(BaseModel):
     email: str
     role: RoleEnum
     expires_at: datetime
-    token: str
+    token: Optional[str] = None
 
 
 class InviteAccept(BaseModel):

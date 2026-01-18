@@ -1,11 +1,30 @@
 import importlib
+import os
 
 import pytest
 from pydantic import ValidationError
 
+os.environ["SKIP_MIGRATIONS"] = "1"
+
 
 def _load_settings(monkeypatch, extra_env=None):
-    import app.core.config as config
+    for key in (
+        "TENANT_HEADER_NAME",
+        "REQUIRE_TENANT_HEADER",
+        "DEFAULT_TENANT_SLUG",
+        "ALLOW_MULTI_TENANT_DEV_BYPASS",
+        "TENANT_STRICT_404",
+        "TENANT_CONTEXT_RESOLUTION_ORDER",
+        "INVITE_TOKEN_TTL_HOURS",
+        "INVITE_TOKEN_RETURN_IN_RESPONSE",
+        "AUDIT_WS_REQUIRE_TENANT",
+        "API_KEY_SECRET_RETURN_IN_RESPONSE",
+        "AGENT_URL",
+        "TRUST_PROXY_HEADERS",
+        "TRUSTED_PROXY_IPS",
+        "TRUSTED_IP_HEADERS",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
     # Ensure required keys exist for import.
     monkeypatch.setenv("SKIP_MIGRATIONS", "1")
@@ -14,6 +33,7 @@ def _load_settings(monkeypatch, extra_env=None):
     if extra_env:
         for key, value in extra_env.items():
             monkeypatch.setenv(key, value)
+    import app.core.config as config
     importlib.reload(config)
     return config.Settings
 
@@ -28,7 +48,17 @@ def test_settings_defaults(monkeypatch):
     assert cfg.TENANT_STRICT_404 is True
     assert cfg.TENANT_CONTEXT_RESOLUTION_ORDER == ["header", "jwt", "default"]
     assert cfg.INVITE_TOKEN_TTL_HOURS == 72
+    assert cfg.INVITE_TOKEN_RETURN_IN_RESPONSE is False
     assert cfg.AUDIT_WS_REQUIRE_TENANT is True
+    assert cfg.API_KEY_SECRET_RETURN_IN_RESPONSE is False
+    assert cfg.AGENT_URL == "https://cdn.yourapp.com/agent.js"
+    assert cfg.TRUST_PROXY_HEADERS is False
+    assert cfg.TRUSTED_PROXY_IPS == []
+    assert cfg.TRUSTED_IP_HEADERS == [
+        "CF-Connecting-IP",
+        "X-Forwarded-For",
+        "X-Real-IP",
+    ]
 
 
 def test_settings_env_overrides(monkeypatch):
@@ -44,7 +74,13 @@ def test_settings_env_overrides(monkeypatch):
             "TENANT_STRICT_404": "false",
             "TENANT_CONTEXT_RESOLUTION_ORDER": '["jwt","header"]',
             "INVITE_TOKEN_TTL_HOURS": "24",
+            "INVITE_TOKEN_RETURN_IN_RESPONSE": "true",
             "AUDIT_WS_REQUIRE_TENANT": "false",
+            "API_KEY_SECRET_RETURN_IN_RESPONSE": "true",
+            "AGENT_URL": "https://cdn.example.com/agent.js",
+            "TRUST_PROXY_HEADERS": "true",
+            "TRUSTED_PROXY_IPS": '["10.0.0.0/8","192.168.0.0/16"]',
+            "TRUSTED_IP_HEADERS": '["X-Forwarded-For","X-Real-IP"]',
         },
     )
     cfg = Settings(_env_file=None)
@@ -55,7 +91,13 @@ def test_settings_env_overrides(monkeypatch):
     assert cfg.TENANT_STRICT_404 is False
     assert cfg.TENANT_CONTEXT_RESOLUTION_ORDER == ["jwt", "header"]
     assert cfg.INVITE_TOKEN_TTL_HOURS == 24
+    assert cfg.INVITE_TOKEN_RETURN_IN_RESPONSE is True
     assert cfg.AUDIT_WS_REQUIRE_TENANT is False
+    assert cfg.API_KEY_SECRET_RETURN_IN_RESPONSE is True
+    assert cfg.AGENT_URL == "https://cdn.example.com/agent.js"
+    assert cfg.TRUST_PROXY_HEADERS is True
+    assert cfg.TRUSTED_PROXY_IPS == ["10.0.0.0/8", "192.168.0.0/16"]
+    assert cfg.TRUSTED_IP_HEADERS == ["X-Forwarded-For", "X-Real-IP"]
     assert cfg.DATABASE_URL == "sqlite:///:memory:"
     assert cfg.SECRET_KEY == "override"
 

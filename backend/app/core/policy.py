@@ -12,6 +12,7 @@ from fastapi import Request
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_403_FORBIDDEN
 
+from app.core.ip import extract_client_ip
 from app.models.alerts import Alert
 
 # Configure a module-level logger so we can report DB issues
@@ -109,10 +110,7 @@ class PolicyEngineMiddleware:
 
         # Derive a client IP — prefer X-Forwarded-For (respecting proxies),
         # and fall back to the socket’s peer address if not present.
-        client_ip = (
-            request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-            or (request.client.host if request.client else None)
-        )
+        client_ip = extract_client_ip(request)
 
         # Use a short-lived DB session to check risk for this IP.
         # If we can’t open a session or query fails, honor POLICY_FAIL_MODE.

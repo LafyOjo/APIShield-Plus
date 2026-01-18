@@ -2,7 +2,7 @@
 
 from typing import Dict, List, Set
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from jose import JWTError
 from sqlalchemy.orm import Session
 
@@ -135,6 +135,7 @@ def read_audit_logs(
 @router.post("/log")
 async def audit_log(
     log: AuditLogCreate,
+    request: Request,
     db: Session = Depends(get_db),
     ctx=Depends(require_tenant_context(user_resolver=get_current_user)),
 ):
@@ -143,6 +144,6 @@ async def audit_log(
     if tenant_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     username = log.username or ctx.username
-    create_audit_log(db, tenant_id, username, log.event.value)
+    create_audit_log(db, tenant_id, username, log.event.value, request=request)
     await _broadcast(tenant_id, log.event.value)
     return {"status": "logged"}

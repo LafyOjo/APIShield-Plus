@@ -12,6 +12,13 @@ from app.tenancy.scoping import scoped_query
 from app.models.memberships import Membership
 
 
+def _naive_utcnow():
+    now = utcnow()
+    if now.tzinfo is None:
+        return now
+    return now.replace(tzinfo=None)
+
+
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
@@ -55,7 +62,7 @@ def create_invite(
         raise ValueError("Invite TTL must be positive.")
     secret = generate_token()
     token_hash = hash_token(secret)
-    expires_at = utcnow() + timedelta(hours=ttl_hours)
+    expires_at = _naive_utcnow() + timedelta(hours=ttl_hours)
     invite = Invite(
         tenant_id=tenant_id,
         email=_normalize_email(email),
@@ -72,20 +79,25 @@ def create_invite(
     return invite, raw_token
 
 
-def get_pending_invites(db: Session, tenant_id: int) -> list[Invite]:
-    now = utcnow()
-    return (
-        scoped_query(db, Invite, tenant_id)
-        .filter(
-            Invite.accepted_at.is_(None),
-            Invite.expires_at > now,
-        )
-        .order_by(Invite.created_at.desc())
-        .all()
-    )
+def get_pending_invites(
+    db: Session,
+    tenant_id: int,
+    *,
+    include_expired: bool = False,
+) -> list[Invite]:
+    query = scoped_query(db, Invite, tenant_id).filter(Invite.accepted_at.is_(None))
+    if not include_expired:
+        query = query.filter(Invite.expires_at > _naive_utcnow())
+    return query.order_by(Invite.created_at.desc()).all()
 
-def list_pending_invites(db: Session, tenant_id: int) -> list[Invite]:
-    return get_pending_invites(db, tenant_id)
+
+def list_pending_invites(
+    db: Session,
+    tenant_id: int,
+    *,
+    include_expired: bool = False,
+) -> list[Invite]:
+    return get_pending_invites(db, tenant_id, include_expired=include_expired)
 
 
 def get_invite_by_token(db: Session, token: str) -> Invite | None:
@@ -104,7 +116,7 @@ def accept_invite(db: Session, token: str, user_id: int) -> Membership | None:
     invite = get_invite_by_token(db, token)
     if not invite:
         return None
-    now = utcnow()
+    now = _naive_utcnow()
     if invite.accepted_at is not None or invite.expires_at <= now:
         return None
     try:
@@ -132,7 +144,7 @@ def revoke_invite(db: Session, tenant_id: int, invite_id: int) -> Invite | None:
     )
     if not invite:
         return None
-    invite.expires_at = utcnow()
+    invite.expires_at = _naive_utcnow()
     db.commit()
     db.refresh(invite)
     return invite

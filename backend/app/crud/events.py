@@ -5,6 +5,8 @@
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+
+from app.core.privacy import hash_ip
 from app.models.events import Event
 
 
@@ -17,10 +19,39 @@ def create_event(
     username: str | None,
     action: str,
     success: bool,
+    client_ip: str | None = None,
+    ip_hash: str | None = None,
+    user_agent: str | None = None,
+    request_path: str | None = None,
+    referrer: str | None = None,
+    country_code: str | None = None,
+    region: str | None = None,
+    city: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    asn: str | None = None,
+    is_datacenter: bool | None = None,
 ) -> Event:
     if tenant_id is None:
         raise ValueError("tenant_id is required to create an event")
+    if client_ip and ip_hash is None:
+        try:
+            ip_hash = hash_ip(tenant_id, client_ip)
+        except ValueError:
+            ip_hash = None
     event = Event(tenant_id=tenant_id, username=username, action=action, success=success)
+    event.client_ip = client_ip
+    event.ip_hash = ip_hash
+    event.user_agent = user_agent
+    event.request_path = request_path
+    event.referrer = referrer
+    event.country_code = country_code
+    event.region = region
+    event.city = city
+    event.latitude = latitude
+    event.longitude = longitude
+    event.asn = asn
+    event.is_datacenter = is_datacenter
     db.add(event)
     db.commit()
     db.refresh(event)

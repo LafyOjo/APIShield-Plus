@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test.db")
 os.environ.setdefault("SECRET_KEY", "secret")
 os.environ.setdefault("INVITE_TOKEN_TTL_HOURS", "1")
+os.environ.setdefault("SKIP_MIGRATIONS", "1")
 
 from app.main import app
 import app.core.db as db_module
@@ -16,6 +17,7 @@ import app.core.access_log as access_log_module
 import app.core.policy as policy_module
 from app.core.db import Base
 from app.core.tokens import verify_token
+from app.core.config import settings
 from app.core.security import get_password_hash
 from app.crud.invites import create_invite, revoke_invite
 from app.crud.memberships import create_membership
@@ -60,7 +62,8 @@ def _login(username: str) -> str:
     return resp.json()["access_token"]
 
 
-def test_create_invite_returns_token_once_and_hashes():
+def test_create_invite_returns_token_once_and_hashes(monkeypatch):
+    monkeypatch.setattr(settings, "INVITE_TOKEN_RETURN_IN_RESPONSE", True)
     db_url = f"sqlite:///./invite_{uuid4().hex}.db"
     SessionLocal = _setup_db(db_url)
     with SessionLocal() as db:
@@ -91,6 +94,103 @@ def test_create_invite_returns_token_once_and_hashes():
         invite_id, secret = _split_token(payload["token"])
         assert invite_id == invite.id
         assert verify_token(secret, invite.token_hash)
+
+
+def test_invite_requires_owner_or_admin():
+    db_url = f"sqlite:///./invite_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+    with SessionLocal() as db:
+        owner = create_user(db, username="owner-role", password_hash=get_password_hash("pw"), role="user")
+        tenant = create_tenant(db, name="RoleTenant")
+        create_membership(
+            db,
+            tenant_id=tenant.id,
+            user_id=owner.id,
+            role="owner",
+            created_by_user_id=owner.id,
+        )
+        viewer = create_user(db, username="viewer-role", password_hash=get_password_hash("pw"), role="user")
+        create_membership(
+            db,
+            tenant_id=tenant.id,
+            user_id=viewer.id,
+            role="viewer",
+            created_by_user_id=owner.id,
+        )
+
+    token = _login("viewer-role")
+    resp = client.post(
+        "/api/v1/invites",
+        json={"email": "new@example.com", "role": "viewer"},
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": "roletenant"},
+    )
+    assert resp.status_code in {403, 404}
+
+
+def test_invite_fails_if_email_already_member(monkeypatch):
+    monkeypatch.setattr(settings, "INVITE_TOKEN_RETURN_IN_RESPONSE", True)
+    db_url = f"sqlite:///./invite_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+    with SessionLocal() as db:
+        owner = create_user(db, username="owner8", password_hash=get_password_hash("pw"), role="user")
+        tenant = create_tenant(db, name="DupTenant")
+        create_membership(
+            db,
+            tenant_id=tenant.id,
+            user_id=owner.id,
+            role="owner",
+            created_by_user_id=owner.id,
+        )
+        existing_user = create_user(db, username="member@example.com", password_hash=get_password_hash("pw"), role="user")
+        create_membership(
+            db,
+            tenant_id=tenant.id,
+            user_id=existing_user.id,
+            role="viewer",
+            created_by_user_id=owner.id,
+        )
+
+    token = _login("owner8")
+    resp = client.post(
+        "/api/v1/invites",
+        json={"email": "member@example.com", "role": "viewer"},
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": "duptenant"},
+    )
+    assert resp.status_code == 409
+
+
+def test_invite_token_returned_only_in_dev_mode(monkeypatch):
+    db_url = f"sqlite:///./invite_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+    with SessionLocal() as db:
+        owner = create_user(db, username="owner9", password_hash=get_password_hash("pw"), role="user")
+        tenant = create_tenant(db, name="TokenTenant")
+        create_membership(
+            db,
+            tenant_id=tenant.id,
+            user_id=owner.id,
+            role="owner",
+            created_by_user_id=owner.id,
+        )
+
+    token = _login("owner9")
+    monkeypatch.setattr(settings, "INVITE_TOKEN_RETURN_IN_RESPONSE", False)
+    resp = client.post(
+        "/api/v1/invites",
+        json={"email": "devmode@example.com", "role": "viewer"},
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": "tokentenant"},
+    )
+    assert resp.status_code == 200
+    assert resp.json().get("token") is None
+
+    monkeypatch.setattr(settings, "INVITE_TOKEN_RETURN_IN_RESPONSE", True)
+    resp = client.post(
+        "/api/v1/invites",
+        json={"email": "devmode2@example.com", "role": "viewer"},
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": "tokentenant"},
+    )
+    assert resp.status_code == 200
+    assert resp.json().get("token")
 
 
 def test_expired_token_rejected():
@@ -147,6 +247,8 @@ def test_accept_invite_creates_membership_and_sets_accepted_at():
             role="analyst",
             created_by_user_id=owner.id,
         )
+        tenant_id = tenant.id
+        invite_id = invite.id
         user = create_user(db, username="newbie", password_hash=get_password_hash("pw"), role="user")
         invitee_id = user.id
 
@@ -161,12 +263,12 @@ def test_accept_invite_creates_membership_and_sets_accepted_at():
     with SessionLocal() as db:
         membership = (
             db.query(Membership)
-            .filter(Membership.tenant_id == invite.tenant_id, Membership.user_id == invitee_id)
+            .filter(Membership.tenant_id == tenant_id, Membership.user_id == invitee_id)
             .first()
         )
         assert membership is not None
         assert membership.role == RoleEnum.ANALYST
-        refreshed = db.query(Invite).filter(Invite.id == invite.id).first()
+        refreshed = db.query(Invite).filter(Invite.id == invite_id).first()
         assert refreshed is not None
         assert refreshed.accepted_at is not None
 
@@ -261,6 +363,126 @@ def test_cross_tenant_invite_list_blocked():
         headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": "tenantb"},
     )
     assert resp.status_code in {403, 404}
+
+
+def test_list_invites_requires_admin_or_owner():
+    db_url = f"sqlite:///./invite_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+    with SessionLocal() as db:
+        owner = create_user(db, username="owner-list", password_hash=get_password_hash("pw"), role="user")
+        tenant = create_tenant(db, name="ListRole")
+        create_membership(
+            db,
+            tenant_id=tenant.id,
+            user_id=owner.id,
+            role="owner",
+            created_by_user_id=owner.id,
+        )
+        viewer = create_user(db, username="viewer-list", password_hash=get_password_hash("pw"), role="user")
+        create_membership(
+            db,
+            tenant_id=tenant.id,
+            user_id=viewer.id,
+            role="viewer",
+            created_by_user_id=owner.id,
+        )
+        create_invite(
+            db,
+            tenant_id=tenant.id,
+            email="pending@example.com",
+            role="viewer",
+            created_by_user_id=owner.id,
+        )
+
+    token = _login("viewer-list")
+    resp = client.get(
+        "/api/v1/invites",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": "listrole"},
+    )
+    assert resp.status_code in {403, 404}
+
+
+def test_list_invites_returns_only_tenant_invites():
+    db_url = f"sqlite:///./invite_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+    with SessionLocal() as db:
+        owner = create_user(db, username="owner-list-tenant", password_hash=get_password_hash("pw"), role="user")
+        tenant_a = create_tenant(db, name="ListA")
+        create_membership(
+            db,
+            tenant_id=tenant_a.id,
+            user_id=owner.id,
+            role="owner",
+            created_by_user_id=owner.id,
+        )
+        tenant_b = create_tenant(db, name="ListB")
+        invite_a, _ = create_invite(
+            db,
+            tenant_id=tenant_a.id,
+            email="a@example.com",
+            role="viewer",
+            created_by_user_id=owner.id,
+        )
+        create_invite(
+            db,
+            tenant_id=tenant_b.id,
+            email="b@example.com",
+            role="viewer",
+            created_by_user_id=owner.id,
+        )
+        invite_a_id = invite_a.id
+
+    token = _login("owner-list-tenant")
+    resp = client.get(
+        "/api/v1/invites",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": "lista"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert len(payload) == 1
+    assert payload[0]["id"] == invite_a_id
+
+
+def test_list_invites_excludes_accepted_by_default():
+    db_url = f"sqlite:///./invite_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+    with SessionLocal() as db:
+        owner = create_user(db, username="owner-list-accepted", password_hash=get_password_hash("pw"), role="user")
+        tenant = create_tenant(db, name="ListAccepted")
+        create_membership(
+            db,
+            tenant_id=tenant.id,
+            user_id=owner.id,
+            role="owner",
+            created_by_user_id=owner.id,
+        )
+        pending_invite, _ = create_invite(
+            db,
+            tenant_id=tenant.id,
+            email="pending@example.com",
+            role="viewer",
+            created_by_user_id=owner.id,
+        )
+        accepted_invite, _ = create_invite(
+            db,
+            tenant_id=tenant.id,
+            email="accepted@example.com",
+            role="viewer",
+            created_by_user_id=owner.id,
+        )
+        accepted_invite.accepted_at = datetime.utcnow()
+        db.commit()
+        pending_id = pending_invite.id
+
+    token = _login("owner-list-accepted")
+    resp = client.get(
+        "/api/v1/invites",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": "listaccepted"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert len(payload) == 1
+    assert payload[0]["id"] == pending_id
 
 
 def test_invite_role_validation():

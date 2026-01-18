@@ -51,7 +51,16 @@ async def get_current_user(
         # If decoding fails, log an "Invalid token" alert tied to client IP
         if request is not None:
             from app.models.alerts import Alert
-            alert = Alert(ip_address=request.client.host, total_fails=0, detail="Invalid token")
+            client_ip = getattr(request.state, "client_ip", None) or "unknown"
+            alert = Alert(
+                ip_address=client_ip,
+                client_ip=client_ip,
+                user_agent=request.headers.get("User-Agent"),
+                request_path=request.url.path,
+                referrer=request.headers.get("Referer"),
+                total_fails=0,
+                detail="Invalid token",
+            )
             db.add(alert)
             db.commit()
         raise credentials_exception

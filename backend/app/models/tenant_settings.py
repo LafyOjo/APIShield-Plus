@@ -18,7 +18,9 @@ class TenantSettings(TimestampMixin, Base):
         primary_key=True,
     )
     timezone = Column(String, nullable=False, default="UTC")
-    retention_days = Column(Integer, nullable=False, default=7)
+    retention_days = Column(Integer, nullable=False, default=30)
+    event_retention_days = Column(Integer, nullable=False, default=30)
+    ip_raw_retention_days = Column(Integer, nullable=False, default=7)
     alert_prefs = Column(JSON_TYPE, nullable=False, default=dict)
 
     tenant = relationship("Tenant", back_populates="settings", lazy="selectin")

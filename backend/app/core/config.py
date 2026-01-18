@@ -60,7 +60,23 @@ class Settings(BaseSettings):
 
     # Invitation and security timing
     INVITE_TOKEN_TTL_HOURS: int = Field(default=72, gt=0)
+    INVITE_TOKEN_RETURN_IN_RESPONSE: bool = False
     AUDIT_WS_REQUIRE_TENANT: bool = True
+
+    # API key responses and embed snippet configuration
+    API_KEY_SECRET_RETURN_IN_RESPONSE: bool = False
+    AGENT_URL: str = "https://cdn.yourapp.com/agent.js"
+
+    # Proxy/client IP extraction settings
+    TRUST_PROXY_HEADERS: bool = False
+    TRUSTED_PROXY_IPS: List[str] = Field(default_factory=list)
+    TRUSTED_IP_HEADERS: List[str] = Field(
+        default_factory=lambda: [
+            "CF-Connecting-IP",
+            "X-Forwarded-For",
+            "X-Real-IP",
+        ]
+    )
 
     # External integration encryption (base64 Fernet key recommended).
     INTEGRATION_ENCRYPTION_KEY: Optional[str] = None
@@ -68,6 +84,14 @@ class Settings(BaseSettings):
     @field_validator("TENANT_CONTEXT_RESOLUTION_ORDER", mode="before")
     @classmethod
     def _parse_resolution_order(cls, value):
+        if isinstance(value, str):
+            parts = [p.strip() for p in value.split(",") if p.strip()]
+            return parts
+        return value
+
+    @field_validator("TRUSTED_PROXY_IPS", "TRUSTED_IP_HEADERS", mode="before")
+    @classmethod
+    def _parse_list_values(cls, value):
         if isinstance(value, str):
             parts = [p.strip() for p in value.split(",") if p.strip()]
             return parts

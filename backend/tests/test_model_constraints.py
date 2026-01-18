@@ -248,11 +248,25 @@ def test_tenant_settings_unique_tenant(db_session):
     tenant = Tenant(name="Soylent", slug="soylent")
     db_session.add(tenant)
     db_session.commit()
-    settings = TenantSettings(tenant_id=tenant.id, timezone="UTC", retention_days=7, alert_prefs={})
+    settings = TenantSettings(
+        tenant_id=tenant.id,
+        timezone="UTC",
+        retention_days=30,
+        event_retention_days=30,
+        ip_raw_retention_days=7,
+        alert_prefs={},
+    )
     db_session.add(settings)
     db_session.commit()
 
-    duplicate = TenantSettings(tenant_id=tenant.id, timezone="UTC", retention_days=7, alert_prefs={})
+    duplicate = TenantSettings(
+        tenant_id=tenant.id,
+        timezone="UTC",
+        retention_days=30,
+        event_retention_days=30,
+        ip_raw_retention_days=7,
+        alert_prefs={},
+    )
     db_session.add(duplicate)
     with pytest.raises(IntegrityError):
         db_session.commit()

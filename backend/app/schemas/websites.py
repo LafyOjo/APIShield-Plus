@@ -46,3 +46,39 @@ class WebsiteAdminRead(WebsiteRead):
 class WebsiteUpdate(BaseModel):
     display_name: Optional[DisplayNameStr] = None
     status: Optional[WebsiteStatusEnum] = None
+
+
+class WebsiteInstallKey(BaseModel):
+    id: int
+    name: Optional[str]
+    public_key: str
+    created_at: datetime
+    revoked_at: Optional[datetime]
+    status: Optional[str]
+    snippet: str
+
+
+class WebsiteInstallEnvironment(BaseModel):
+    id: int
+    name: str
+    base_url: Optional[str]
+    status: str
+    keys: list[WebsiteInstallKey]
+
+
+class WebsiteInstallVerification(BaseModel):
+    id: int
+    method: str
+    status: str
+    created_at: datetime
+    verified_at: Optional[datetime]
+    last_checked_at: Optional[datetime]
+    token: Optional[str]
+    instructions: Optional[str]
+
+
+class WebsiteInstallRead(BaseModel):
+    website: WebsiteRead
+    environments: list[WebsiteInstallEnvironment]
+    verification: Optional[WebsiteInstallVerification]
+    next_steps: list[str]

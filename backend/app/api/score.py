@@ -23,6 +23,9 @@ from app.models.alerts import Alert
 from app.models.memberships import Membership
 import app.api.security as security
 from app.core.events import log_event
+from app.core.ip import extract_client_ip
+from app.core.privacy import hash_ip
+from app.core.request_meta import resolve_request_meta
 from app.tenancy.constants import TENANT_HEADER
 
 router = APIRouter(
@@ -125,9 +128,11 @@ def is_rate_limited(db: Session, user_id: int, limit: int) -> bool:
 # - Blocks IPs if too many failures happened in the time window.
 def record_attempt(
     db: Session,
-    client_ip: str,
+    client_ip: str | None,
     success: bool,
     *,
+    request: Request | None = None,
+    request_meta: dict[str, str | None] | None = None,
     with_jwt: bool = False,
     detail: str | None = None,
     user_id: int | None = None,
@@ -136,6 +141,20 @@ def record_attempt(
     tenant_id: int | None = None,
 ) -> Dict[str, Any]:
     """Record a login attempt and return a JSON status."""
+    meta = resolve_request_meta(request=request, request_meta=request_meta) or {}
+    if not client_ip:
+        client_ip = meta.get("client_ip") or (extract_client_ip(request) if request else None)
+    if not client_ip:
+        client_ip = "unknown"
+    user_agent = meta.get("user_agent")
+    request_path = meta.get("path")
+    referrer = meta.get("referer")
+    ip_hash = None
+    if tenant_id is not None and client_ip not in {"unknown", ""}:
+        try:
+            ip_hash = hash_ip(tenant_id, client_ip)
+        except ValueError:
+            ip_hash = None
 
     # Track attempt in Prometheus
     LOGIN_ATTEMPTS.labels(ip=client_ip).inc()
@@ -148,7 +167,7 @@ def record_attempt(
     if success:
         if user_id is not None:
             FAILED_USER_ATTEMPTS.pop(user_id, None)
-        log_event(db, tenant_id, username, "stuffing_attempt", True)
+        log_event(db, tenant_id, username, "stuffing_attempt", True, request_meta=meta)
         return {"status": "ok", "fails_last_minute": 0}
 
     # If failure, count how many recent fails for this IP
@@ -174,14 +193,20 @@ def record_attempt(
         FAILED_USER_ATTEMPTS[user_id] = attempts
 
     # Log failed attempt in event log
-    log_event(db, tenant_id, username, "stuffing_attempt", False)
+    log_event(db, tenant_id, username, "stuffing_attempt", False, request_meta=meta)
 
     # If security is enabled and too many fails → BLOCK
     if security.SECURITY_ENABLED and fail_count >= ip_fail_limit:
         STUFFING_DETECTIONS.labels(ip=client_ip).inc()
-        log_event(db, tenant_id, None, "stuffing_block", True)
+        log_event(db, tenant_id, None, "stuffing_block", True, request_meta=meta)
         alert = Alert(
+            tenant_id=tenant_id,
             ip_address=client_ip,
+            ip_hash=ip_hash,
+            client_ip=client_ip,
+            user_agent=user_agent,
+            request_path=request_path,
+            referrer=referrer,
             total_fails=fail_count + 1,
             detail="Blocked: too many failures",
         )
@@ -192,7 +217,13 @@ def record_attempt(
 
     # Otherwise just log the failed attempt as an alert
     alert = Alert(
+        tenant_id=tenant_id,
         ip_address=client_ip,
+        ip_hash=ip_hash,
+        client_ip=client_ip,
+        user_agent=user_agent,
+        request_path=request_path,
+        referrer=referrer,
         total_fails=fail_count + 1,
         detail=detail or "Failed login",
     )
@@ -220,7 +251,7 @@ def score(payload: Dict[str, Any], request: Request, db: Session = Depends(get_d
     the frontend. It validates input, records attempts, and
     enforces credential stuffing protection rules.
     """
-    client_ip = payload.get("client_ip")
+    client_ip = payload.get("client_ip") or getattr(request.state, "client_ip", None)
     auth_result = payload.get("auth_result")
     with_jwt = bool(payload.get("with_jwt"))
     username = payload.get("username")
@@ -231,10 +262,23 @@ def score(payload: Dict[str, Any], request: Request, db: Session = Depends(get_d
             # Chain verification adds another Zero Trust layer
             security.verify_chain(request.headers.get("X-Chain-Password"))
         except HTTPException as exc:
-            STUFFING_DETECTIONS.labels(ip=request.client.host).inc()
-            log_event(db, tenant_id, None, "stuffing_block", True)
+            STUFFING_DETECTIONS.labels(ip=getattr(request.state, "client_ip", None) or "unknown").inc()
+            log_event(db, tenant_id, None, "stuffing_block", True, request=request)
+            ip_hash = None
+            client_ip = getattr(request.state, "client_ip", None) or "unknown"
+            if tenant_id is not None and client_ip not in {"unknown", ""}:
+                try:
+                    ip_hash = hash_ip(tenant_id, client_ip)
+                except ValueError:
+                    ip_hash = None
             alert = Alert(
-                ip_address=request.client.host,
+                tenant_id=tenant_id,
+                ip_address=client_ip,
+                ip_hash=ip_hash,
+                client_ip=client_ip,
+                user_agent=request.headers.get("User-Agent"),
+                request_path=request.url.path,
+                referrer=request.headers.get("Referer"),
                 total_fails=0,
                 detail="Blocked: invalid chain token",
             )
@@ -250,6 +294,7 @@ def score(payload: Dict[str, Any], request: Request, db: Session = Depends(get_d
         db,
         client_ip,
         auth_result == "success",
+        request=request,
         with_jwt=with_jwt,
         username=username,
         tenant_id=tenant_id,

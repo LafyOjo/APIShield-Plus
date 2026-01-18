@@ -26,7 +26,20 @@ class APIKeyCreate(BaseModel):
 class APIKeyCreatedResponse(BaseModel):
     id: int
     public_key: str
-    raw_secret: str
+    raw_secret: Optional[str] = None
+
+
+class APIKeyCreateRequest(BaseModel):
+    name: Optional[str] = None
+
+
+class APIKeyCreatedWithSnippetResponse(BaseModel):
+    id: int
+    public_key: str
+    created_at: datetime
+    revoked_at: Optional[datetime]
+    raw_secret: Optional[str] = None
+    snippet: str
 
 
 class APIKeyRevokeResponse(BaseModel):

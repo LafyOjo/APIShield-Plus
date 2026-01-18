@@ -51,6 +51,38 @@ def _resolve_membership_role(db: Session, user, tenant_id: Optional[str]) -> Opt
     return membership.role
 
 
+def get_current_membership(
+    db: Session,
+    current_user,
+    tenant_id: Optional[str],
+) -> Membership:
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tenant must be provided via header",
+        )
+    tenant_value = tenant_id.strip()
+    tenant = (
+        get_tenant_by_id(db, int(tenant_value))
+        if tenant_value.isdigit()
+        else get_tenant_by_slug(db, tenant_value)
+    )
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    membership = (
+        db.query(Membership)
+        .filter(
+            Membership.tenant_id == tenant.id,
+            Membership.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not membership or membership.status != MembershipStatusEnum.ACTIVE:
+        status_code = status.HTTP_404_NOT_FOUND if settings.TENANT_STRICT_404 else status.HTTP_403_FORBIDDEN
+        raise HTTPException(status_code=status_code, detail="Tenant membership not found")
+    return membership
+
+
 async def get_request_context(
     request: Request,
     db: Session,
@@ -86,16 +118,26 @@ def require_tenant_context(*, user_resolver: Optional[Callable] = None):
         db: Session = Depends(get_db),
         current_user=Depends(user_resolver),
     ) -> RequestContext:
-        ctx = await get_request_context(request=request, db=db, current_user=current_user)
-        if settings.REQUIRE_TENANT_HEADER and ctx.tenant_id is None:
+        tenant_id = _resolve_tenant_id(request)
+        request_id = getattr(request.state, "request_id", str(uuid4()))
+        user_id = getattr(current_user, "id", None)
+        username = getattr(current_user, "username", None)
+        if settings.REQUIRE_TENANT_HEADER and tenant_id is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Tenant must be provided via header",
             )
-        if ctx.tenant_id and ctx.role is None:
-            status_code = status.HTTP_404_NOT_FOUND if settings.TENANT_STRICT_404 else status.HTTP_403_FORBIDDEN
-            raise HTTPException(status_code=status_code, detail="Tenant membership not found")
-        return ctx
+        role = None
+        if tenant_id is not None:
+            membership = get_current_membership(db, current_user, tenant_id)
+            role = membership.role
+        return RequestContext(
+            request_id=request_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            username=username,
+            role=role,
+        )
 
     return dependency
 
@@ -104,6 +146,7 @@ def require_roles(
     roles: Iterable[RoleEnum | str],
     *,
     user_resolver: Optional[Callable] = None,
+    allow_higher_roles: bool = True,
 ):
     """
     Dependency enforcing that the caller has one of the allowed roles.
@@ -112,6 +155,25 @@ def require_roles(
         if isinstance(role, RoleEnum):
             return role
         return RoleEnum(role)
+
+    role_hierarchy = {
+        RoleEnum.VIEWER: 1,
+        RoleEnum.ANALYST: 2,
+        RoleEnum.ADMIN: 3,
+        RoleEnum.OWNER: 4,
+    }
+
+    def _role_satisfies(required_roles: set[RoleEnum], actual_role: RoleEnum | None) -> bool:
+        if not required_roles:
+            return True
+        if actual_role is None:
+            return False
+        if not allow_higher_roles:
+            return actual_role in required_roles
+        actual_rank = role_hierarchy.get(actual_role)
+        if actual_rank is None:
+            return False
+        return any(actual_rank >= role_hierarchy.get(required, 0) for required in required_roles)
 
     role_set = {_normalize_role(role) for role in roles}
 
@@ -124,7 +186,7 @@ def require_roles(
                 ctx_role = _normalize_role(ctx.role)
             except ValueError:
                 ctx_role = None
-        if role_set and ctx_role not in role_set:
+        if not _role_satisfies(role_set, ctx_role):
             status_code = status.HTTP_404_NOT_FOUND if settings.TENANT_STRICT_404 else status.HTTP_403_FORBIDDEN
             raise HTTPException(status_code=status_code, detail="Insufficient role for tenant operation")
         return ctx
@@ -136,8 +198,9 @@ def require_role_in_tenant(
     roles: Iterable[RoleEnum | str],
     *,
     user_resolver: Optional[Callable] = None,
+    allow_higher_roles: bool = True,
 ):
     """
     Alias for require_roles to emphasize tenant-scoped RBAC usage.
     """
-    return require_roles(roles, user_resolver=user_resolver)
+    return require_roles(roles, user_resolver=user_resolver, allow_higher_roles=allow_higher_roles)

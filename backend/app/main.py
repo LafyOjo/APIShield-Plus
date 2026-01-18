@@ -44,6 +44,8 @@ from app.api.external_integrations import router as external_integrations_router
 from app.api.user_profile import router as user_profile_router
 from app.api.memberships import router as memberships_router
 from app.api.tenants import router as tenants_router
+from app.api.me import router as me_router
+from app.api.websites import router as websites_router
 
 # Create DB tables right away so the app doesn’t hit missing
 # schema issues later. This runs once on startup.
@@ -51,10 +53,6 @@ Base.metadata.create_all(bind=engine)
 
 # Spin up the FastAPI app. Title shows in Swagger docs.
 app = FastAPI(title="APIShield+")
-
-# Attach request context (request_id) early.
-app.add_middleware(RequestContextMiddleware)
-
 
 # Observability and logging layers
 # These middlewares capture logs, request metrics, and access
@@ -105,12 +103,15 @@ routers = [
     user_profile_router,
     memberships_router,
     tenants_router,
+    websites_router,
 ]
 
 for r in routers:
     api_v1.include_router(r)
     api_legacy.include_router(r)
     api_root.include_router(r)
+
+api_v1.include_router(me_router)
 
 # Optional router for credential stuffing stats
 try:
@@ -125,6 +126,9 @@ except Exception:
 app.include_router(api_v1)
 app.include_router(api_legacy)
 app.include_router(api_root)
+
+# Attach request context (request_id, client_ip, request_meta) early.
+app.add_middleware(RequestContextMiddleware)
 
 # /metrics endpoint (Prometheus scraping)
 # Exposes metrics in the standard Prometheus text format so you

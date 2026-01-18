@@ -106,6 +106,8 @@ def switch_tenant_endpoint(
         "settings": {
             "timezone": settings_snapshot.timezone,
             "retention_days": settings_snapshot.retention_days,
+            "event_retention_days": settings_snapshot.event_retention_days,
+            "ip_raw_retention_days": settings_snapshot.ip_raw_retention_days,
             "alert_prefs": settings_snapshot.alert_prefs,
         },
         "plan_name": entitlements.get("plan_name"),

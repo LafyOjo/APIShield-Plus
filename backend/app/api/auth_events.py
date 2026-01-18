@@ -43,7 +43,7 @@ def log_auth_event(
         username = (payload.username or "unknown")
 
         # Get client IP — useful for detecting suspicious login sources
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = getattr(request.state, "client_ip", None) or "unknown"
 
         # Booleans make sure we never deal with None in DB/metrics
         success = bool(payload.success)

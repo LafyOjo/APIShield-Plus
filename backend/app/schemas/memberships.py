@@ -42,7 +42,7 @@ class MembershipCreate(BaseModel):
     def normalize_email(cls, value: Optional[EmailStr]) -> Optional[EmailStr]:
         if value is None:
             return value
-        return EmailStr(value.lower())
+        return value.lower()
 
     @root_validator(skip_on_failure=True)
     def require_user_or_email(cls, values):
@@ -55,3 +55,26 @@ class MembershipCreate(BaseModel):
 
 class MembershipUpdate(BaseModel):
     role: RoleEnum
+
+
+class MemberUser(BaseModel):
+    id: int
+    email: Optional[str] = None
+    display_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+
+class MemberMembership(BaseModel):
+    id: int
+    role: RoleEnum
+    status: MembershipStatusEnum
+    created_at: datetime
+
+
+class MemberListItem(BaseModel):
+    user: MemberUser
+    membership: MemberMembership
+
+
+class MemberDeleteResponse(BaseModel):
+    success: bool

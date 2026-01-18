@@ -9,6 +9,7 @@ from starlette.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED
 
 from app.core.db import SessionLocal
+from app.core.ip import extract_client_ip
 from app.api.score import record_attempt
 
 # Grab the configured Zero Trust API key from environment.
@@ -59,9 +60,9 @@ class ZeroTrustMiddleware(BaseHTTPMiddleware):
         # return 401 Unauthorized to the caller.
         header = request.headers.get("X-API-Key")
         if header != API_KEY:
-            client_ip = request.client.host if request.client else "unknown"
+            client_ip = getattr(request.state, "client_ip", None) or extract_client_ip(request)
             with SessionLocal() as db:
-                record_attempt(db, client_ip, False, detail="Invalid API key")
+                record_attempt(db, client_ip, False, detail="Invalid API key", request=request)
             return JSONResponse({"detail": "Invalid API key"}, status_code=401)
 
         # Step 6: If all checks pass, the request is allowed

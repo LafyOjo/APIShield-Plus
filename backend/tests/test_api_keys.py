@@ -2,12 +2,20 @@ import os
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test.db")
 os.environ.setdefault("SECRET_KEY", "test-secret")
+os.environ.setdefault("API_KEY_SECRET_RETURN_IN_RESPONSE", "true")
+os.environ["SKIP_MIGRATIONS"] = "1"
 
 from app.main import app
-from app.core.db import SessionLocal
+import app.core.db as db_module
+import app.core.access_log as access_log_module
+import app.core.policy as policy_module
+from app.core.config import settings
+from app.core.db import Base
 from app.core.keys import hash_secret, verify_secret
 from app.core.security import get_password_hash
 from app.crud.api_keys import create_api_key
@@ -21,15 +29,32 @@ from app.crud import api_keys as api_keys_crud
 
 
 client = TestClient(app)
+settings.API_KEY_SECRET_RETURN_IN_RESPONSE = True
 
 
-def _create_user_with_role(username: str, role: str) -> int:
+def _setup_db(db_url: str):
+    engine = create_engine(
+        db_url,
+        connect_args={"check_same_thread": False},
+        future=True,
+    )
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    db_module.engine = engine
+    db_module.SessionLocal = SessionLocal
+    access_log_module.SessionLocal = SessionLocal
+    policy_module.SessionLocal = SessionLocal
+    access_log_module.create_access_log = lambda db, username, path: None
+    Base.metadata.create_all(bind=engine)
+    return SessionLocal
+
+
+def _create_user_with_role(SessionLocal, username: str, role: str) -> int:
     with SessionLocal() as db:
         user = create_user(db, username=username, password_hash=get_password_hash("pw"), role=role)
         return user.id
 
 
-def _add_membership(user_id: int, tenant_id: int, role: str) -> None:
+def _add_membership(SessionLocal, user_id: int, tenant_id: int, role: str) -> None:
     with SessionLocal() as db:
         create_membership(
             db,
@@ -46,7 +71,7 @@ def _login(username: str) -> str:
     return resp.json()["access_token"]
 
 
-def _setup_tenant_website_env(prefix: str):
+def _setup_tenant_website_env(SessionLocal, prefix: str):
     with SessionLocal() as db:
         tenant = create_tenant(db, name=f"{prefix}-tenant")
         website = create_website(db, tenant.id, f"{prefix}.example.com")
@@ -59,10 +84,11 @@ def _setup_tenant_website_env(prefix: str):
 
 def test_create_api_key_returns_secret_once_and_persists_hash():
     suffix = uuid4().hex[:8]
+    SessionLocal = _setup_db(f"sqlite:///./api_keys_{suffix}.db")
     username = f"owner_{suffix}"
-    user_id = _create_user_with_role(username, "owner")
-    tenant, website, environment = _setup_tenant_website_env(f"acme-{suffix}")
-    _add_membership(user_id=user_id, tenant_id=tenant.id, role="owner")
+    user_id = _create_user_with_role(SessionLocal, username, "owner")
+    tenant, website, environment = _setup_tenant_website_env(SessionLocal, f"acme-{suffix}")
+    _add_membership(SessionLocal, user_id=user_id, tenant_id=tenant.id, role="owner")
     token = _login(username)
 
     resp = client.post(
@@ -88,10 +114,11 @@ def test_create_api_key_returns_secret_once_and_persists_hash():
 
 def test_list_api_keys_never_returns_secret_or_hash():
     suffix = uuid4().hex[:8]
+    SessionLocal = _setup_db(f"sqlite:///./api_keys_{suffix}.db")
     username = f"owner_list_{suffix}"
-    user_id = _create_user_with_role(username, "owner")
-    tenant, website, environment = _setup_tenant_website_env(f"list-{suffix}")
-    _add_membership(user_id=user_id, tenant_id=tenant.id, role="owner")
+    user_id = _create_user_with_role(SessionLocal, username, "owner")
+    tenant, website, environment = _setup_tenant_website_env(SessionLocal, f"list-{suffix}")
+    _add_membership(SessionLocal, user_id=user_id, tenant_id=tenant.id, role="owner")
     token = _login(username)
 
     with SessionLocal() as db:
@@ -118,13 +145,14 @@ def test_list_api_keys_never_returns_secret_or_hash():
 
 def test_revoke_api_key_sets_revoked_at_and_blocks_future_rotation_without_owner():
     suffix = uuid4().hex[:8]
+    SessionLocal = _setup_db(f"sqlite:///./api_keys_{suffix}.db")
     owner = f"owner_revoke_{suffix}"
     viewer = f"viewer_revoke_{suffix}"
-    owner_id = _create_user_with_role(owner, "owner")
-    viewer_id = _create_user_with_role(viewer, "viewer")
-    tenant, website, environment = _setup_tenant_website_env(f"revoke-{suffix}")
-    _add_membership(user_id=owner_id, tenant_id=tenant.id, role="owner")
-    _add_membership(user_id=viewer_id, tenant_id=tenant.id, role="viewer")
+    owner_id = _create_user_with_role(SessionLocal, owner, "owner")
+    viewer_id = _create_user_with_role(SessionLocal, viewer, "viewer")
+    tenant, website, environment = _setup_tenant_website_env(SessionLocal, f"revoke-{suffix}")
+    _add_membership(SessionLocal, user_id=owner_id, tenant_id=tenant.id, role="owner")
+    _add_membership(SessionLocal, user_id=viewer_id, tenant_id=tenant.id, role="viewer")
     owner_token = _login(owner)
     viewer_token = _login(viewer)
 
@@ -154,10 +182,11 @@ def test_revoke_api_key_sets_revoked_at_and_blocks_future_rotation_without_owner
 
 def test_rotate_api_key_revokes_old_and_creates_new():
     suffix = uuid4().hex[:8]
+    SessionLocal = _setup_db(f"sqlite:///./api_keys_{suffix}.db")
     username = f"owner_rotate_{suffix}"
-    user_id = _create_user_with_role(username, "owner")
-    tenant, website, environment = _setup_tenant_website_env(f"rotate-{suffix}")
-    _add_membership(user_id=user_id, tenant_id=tenant.id, role="owner")
+    user_id = _create_user_with_role(SessionLocal, username, "owner")
+    tenant, website, environment = _setup_tenant_website_env(SessionLocal, f"rotate-{suffix}")
+    _add_membership(SessionLocal, user_id=user_id, tenant_id=tenant.id, role="owner")
     token = _login(username)
 
     with SessionLocal() as db:
@@ -188,12 +217,13 @@ def test_rotate_api_key_revokes_old_and_creates_new():
 
 def test_cross_tenant_access_returns_404():
     suffix = uuid4().hex[:8]
+    SessionLocal = _setup_db(f"sqlite:///./api_keys_{suffix}.db")
     username = f"owner_cross_{suffix}"
-    user_id = _create_user_with_role(username, "owner")
-    tenant_a, website_a, _ = _setup_tenant_website_env(f"cross-a-{suffix}")
-    tenant_b, _, _ = _setup_tenant_website_env(f"cross-b-{suffix}")
-    _add_membership(user_id=user_id, tenant_id=tenant_a.id, role="owner")
-    _add_membership(user_id=user_id, tenant_id=tenant_b.id, role="owner")
+    user_id = _create_user_with_role(SessionLocal, username, "owner")
+    tenant_a, website_a, _ = _setup_tenant_website_env(SessionLocal, f"cross-a-{suffix}")
+    tenant_b, _, _ = _setup_tenant_website_env(SessionLocal, f"cross-b-{suffix}")
+    _add_membership(SessionLocal, user_id=user_id, tenant_id=tenant_a.id, role="owner")
+    _add_membership(SessionLocal, user_id=user_id, tenant_id=tenant_b.id, role="owner")
     token = _login(username)
 
     resp = client.get(
@@ -205,7 +235,8 @@ def test_cross_tenant_access_returns_404():
 
 def test_public_key_uniqueness_collision_handling(monkeypatch):
     suffix = uuid4().hex[:8]
-    tenant, website, environment = _setup_tenant_website_env(f"collision-{suffix}")
+    SessionLocal = _setup_db(f"sqlite:///./api_keys_{suffix}.db")
+    tenant, website, environment = _setup_tenant_website_env(SessionLocal, f"collision-{suffix}")
 
     with SessionLocal() as db:
         existing = APIKey(
