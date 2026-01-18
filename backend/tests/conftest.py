@@ -14,6 +14,9 @@ sys.path.insert(0, str(backend_root))
 @pytest.fixture(autouse=True)
 def apply_migrations():
     """Apply Alembic migrations for a clean database before each test."""
+    if os.getenv("SKIP_MIGRATIONS") == "1":
+        yield
+        return
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         # Tests that don't touch the DB can skip migrations.

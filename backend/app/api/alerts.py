@@ -28,7 +28,7 @@ from app.models.alerts import Alert
 # dedicated router per domain (alerts, users, logs, etc.) keeps the codebase
 # tidy and makes it trivial to include or exclude features when composing the app.
 router = APIRouter(
-    prefix="/api/alerts",
+    prefix="/alerts",
     tags=["alerts"],
 )
 

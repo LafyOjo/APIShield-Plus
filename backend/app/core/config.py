@@ -1,11 +1,28 @@
-# Central place for all configurable settings. We use Pydantic’s
+# Central place for all configurable settings. We use Pydantic's
 # BaseSettings so values can be read from env vars or a .env file.
 # This keeps deployment flexible without hardcoding secrets.
 
-from pydantic_settings import BaseSettings
+import json
+from typing import List, Optional
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def safe_json_loads(value):
+    try:
+        return json.loads(value)
+    except Exception:
+        return value
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_json_loads=safe_json_loads,
+    )
+
     # Core DB connection string, like sqlite:///./app.db or Postgres URL.
     # Needed by SQLAlchemy to connect to the persistence layer.
     DATABASE_URL: str
@@ -31,6 +48,31 @@ class Settings(BaseSettings):
     FAIL_LIMIT: int = 5
     FAIL_WINDOW_SECONDS: int = 60
 
+    # Tenancy: header resolution and enforcement
+    TENANT_HEADER_NAME: str = "X-Tenant-ID"
+    REQUIRE_TENANT_HEADER: bool = True
+    DEFAULT_TENANT_SLUG: Optional[str] = None
+    ALLOW_MULTI_TENANT_DEV_BYPASS: bool = False
+    TENANT_STRICT_404: bool = True
+    TENANT_CONTEXT_RESOLUTION_ORDER: List[str] = Field(
+        default_factory=lambda: ["header", "jwt", "default"]
+    )
+
+    # Invitation and security timing
+    INVITE_TOKEN_TTL_HOURS: int = Field(default=72, gt=0)
+    AUDIT_WS_REQUIRE_TENANT: bool = True
+
+    # External integration encryption (base64 Fernet key recommended).
+    INTEGRATION_ENCRYPTION_KEY: Optional[str] = None
+
+    @field_validator("TENANT_CONTEXT_RESOLUTION_ORDER", mode="before")
+    @classmethod
+    def _parse_resolution_order(cls, value):
+        if isinstance(value, str):
+            parts = [p.strip() for p in value.split(",") if p.strip()]
+            return parts
+        return value
+
     # Toggle SQLAlchemy echo logs. Useful for debugging queries locally.
     DB_ECHO: bool = False
 
@@ -54,12 +96,6 @@ class Settings(BaseSettings):
     # Where Prometheus is expected to live inside k8s cluster.
     # Metrics scrapers point here.
     PROMETHEUS_URL: str = "http://kube-prom-kube-prometheus-prometheus.monitoring.svc:9090"
-
-    class Config:
-        # Tell Pydantic to read from a .env file by default.
-        # This means local dev can work without exporting env vars.
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 # Instantiate a single settings object for app-wide import.

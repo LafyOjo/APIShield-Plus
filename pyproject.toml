@@ -1,0 +1,44 @@
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+exclude = '''
+/(
+    \.venv
+  | node_modules
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+combine_as_imports = true
+known_first_party = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-select = [
+    "B",      # flake8-bugbear
+    "E", "F", # pycodestyle/pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "DTZ",    # timezone-aware datetime
+    "TCH",    # type-checking imports
+    "ARG",    # unused arguments
+    "SLOT",   # slots
+    "W",      # pycodestyle warnings
+]
+ignore = [
+    "E203",   # handled by black
+]
+exclude = ["venv", ".venv", "node_modules", "build", "dist"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

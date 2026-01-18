@@ -1,28 +1,51 @@
 # This small API file exposes read-only configuration details
-# to the frontend/dashboard. For now it only shares the 
+# to the frontend/dashboard. For now it only shares the
 # "fail_limit" setting (how many failed login attempts are
 # allowed before rate limiting / lockout kicks in).
 #
-# Only admins can call this endpoint, to prevent regular users
+# Only owners/admins can call this endpoint, to prevent regular users
 # from learning security policy details like thresholds.
 
-from fastapi import APIRouter, Depends
-import os
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.score import DEFAULT_FAIL_LIMIT
-from app.api.dependencies import require_role
+from app.api.dependencies import get_current_user
+from app.core.config import settings
+from app.core.db import get_db
+from app.crud.tenant_settings import get_settings
+from app.crud.tenants import get_tenant_by_id, get_tenant_by_slug
+from app.models.enums import RoleEnum
+from app.tenancy.dependencies import require_roles
 
-# Router setup — all endpoints here tagged as "config"
+# Router setup - all endpoints here tagged as "config"
 router = APIRouter(tags=["config"])
 
 
+def _resolve_tenant_id(db, tenant_hint: str) -> int:
+    if not tenant_hint:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    tenant_value = tenant_hint.strip()
+    tenant = (
+        get_tenant_by_id(db, int(tenant_value))
+        if tenant_value.isdigit()
+        else get_tenant_by_slug(db, tenant_value)
+    )
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    return tenant.id
+
+
 # Returns the currently active fail_limit value.
-# This comes either from the FAIL_LIMIT environment variable
-# (so it’s easy to override per deployment) or falls back to
-# the code default.  The require_role("admin") dependency 
-# ensures that only admins can query this setting.
+# This now reads from tenant settings, with settings.FAIL_LIMIT
+# used as a fallback default. The require_roles dependency
+# enforces tenant context + admin role (pattern for tenant-aware routes).
 @router.get("/config")
-def get_config(_user=Depends(require_role("admin"))):
+def get_config(
+    db=Depends(get_db),
+    ctx=Depends(require_roles([RoleEnum.OWNER, RoleEnum.ADMIN], user_resolver=get_current_user)),
+):
     """Return the current FAIL_LIMIT configuration value."""
-    fail_limit = int(os.getenv("FAIL_LIMIT", DEFAULT_FAIL_LIMIT))
+    tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
+    tenant_settings = get_settings(db, tenant_id)
+    alert_prefs = tenant_settings.alert_prefs or {}
+    fail_limit = alert_prefs.get("fail_limit", settings.FAIL_LIMIT)
     return {"fail_limit": fail_limit}

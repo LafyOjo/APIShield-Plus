@@ -2,7 +2,7 @@
 # logging/security, sets up CORS, and includes all the routers.
 # It’s the heart of the project where everything is connected.
 
-from fastapi import FastAPI, Response
+from fastapi import APIRouter, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
@@ -16,7 +16,9 @@ from app.core.access_log import AccessLogMiddleware
 from app.core.anomaly import AnomalyDetectionMiddleware
 from app.core.policy import PolicyEngineMiddleware
 from app.core.metrics import MetricsMiddleware
+from app.tenancy.middleware import RequestContextMiddleware
 from app.core.re_auth import ReAuthMiddleware
+from app.core.versioning import API_PREFIX, API_V1_PREFIX
 
 # Bring in all routers (grouped by feature area)
 from app.api.score import router as score_router
@@ -30,6 +32,18 @@ from app.api.last_logins import router as last_logins_router
 from app.api.access_logs import router as access_logs_router
 from app.api.audit import router as audit_router
 from app.api.auth_events import router as auth_events_router
+from app.api.api_keys import router as api_keys_router
+from app.api.invites import router as invites_router
+from app.api.tenant_settings import router as tenant_settings_router
+from app.api.usage import router as usage_router
+from app.api.data_retention import router as data_retention_router
+from app.api.entitlements import router as entitlements_router
+from app.api.domain_verification import router as domain_verification_router
+from app.api.project_tags import router as project_tags_router
+from app.api.external_integrations import router as external_integrations_router
+from app.api.user_profile import router as user_profile_router
+from app.api.memberships import router as memberships_router
+from app.api.tenants import router as tenants_router
 
 # Create DB tables right away so the app doesn’t hit missing
 # schema issues later. This runs once on startup.
@@ -37,6 +51,9 @@ Base.metadata.create_all(bind=engine)
 
 # Spin up the FastAPI app. Title shows in Swagger docs.
 app = FastAPI(title="APIShield+")
+
+# Attach request context (request_id) early.
+app.add_middleware(RequestContextMiddleware)
 
 
 # Observability and logging layers
@@ -59,29 +76,55 @@ app.add_middleware(PolicyEngineMiddleware)
 if os.getenv("ANOMALY_DETECTION", "false").lower() == "true":
     app.add_middleware(AnomalyDetectionMiddleware)
 
-# Routers for different feature areas
-# Each router organizes endpoints under a clean prefix so the
-# API feels modular and easy to explore in Swagger UI.
-app.include_router(score_router)            # /score
-app.include_router(alerts_router)           # /api/alerts
-app.include_router(auth_router)             # /register, /login, /api/token
-app.include_router(config_router)           # /config
-app.include_router(security_router)         # /api/security
-app.include_router(user_stats_router)       # /api/user-calls
-app.include_router(events_router)           # /api/events
-app.include_router(last_logins_router)      # /api/last-logins
-app.include_router(access_logs_router)      # /api/access-logs
-app.include_router(audit_router)            # /api/audit/log
-app.include_router(auth_events_router)      # /events/auth
+# Routers grouped by version + compatibility
+api_v1 = APIRouter(prefix=API_V1_PREFIX)
+api_legacy = APIRouter(prefix=API_PREFIX)
+api_root = APIRouter(prefix="")
+
+routers = [
+    score_router,
+    alerts_router,
+    auth_router,
+    config_router,
+    security_router,
+    user_stats_router,
+    events_router,
+    last_logins_router,
+    access_logs_router,
+    audit_router,
+    auth_events_router,
+    api_keys_router,
+    invites_router,
+    tenant_settings_router,
+    usage_router,
+    data_retention_router,
+    entitlements_router,
+    domain_verification_router,
+    project_tags_router,
+    external_integrations_router,
+    user_profile_router,
+    memberships_router,
+    tenants_router,
+]
+
+for r in routers:
+    api_v1.include_router(r)
+    api_legacy.include_router(r)
+    api_root.include_router(r)
 
 # Optional router for credential stuffing stats
-# We import it safely with a try/except in case the file doesn’t
-# exist (keeps deployments flexible).
 try:
     from app.api.credential_stuffing import router as credential_stuffing_router
-    app.include_router(credential_stuffing_router)   # /api/credential-stuffing-stats
+
+    api_v1.include_router(credential_stuffing_router)
+    api_legacy.include_router(credential_stuffing_router)
+    api_root.include_router(credential_stuffing_router)
 except Exception:
     pass
+
+app.include_router(api_v1)
+app.include_router(api_legacy)
+app.include_router(api_root)
 
 # /metrics endpoint (Prometheus scraping)
 # Exposes metrics in the standard Prometheus text format so you
@@ -91,10 +134,9 @@ def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-# /ping endpoint
-# Simple liveness check; responds with "pong". Useful for health
-# probes, scripts, and debugging.
+# /ping endpoint and versioned health
 @app.get("/ping")
+@app.get(f"{API_V1_PREFIX}/health")
 def ping():
     return {"message": "pong"}
 

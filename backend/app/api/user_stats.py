@@ -14,7 +14,7 @@ from app.api.dependencies import require_role
 # We mount the router at /api/user-calls and tag it as “stats”.
 # That means in the OpenAPI docs, it shows up in the “stats”
 # section and every endpoint here is prefixed accordingly.
-router = APIRouter(prefix="/api/user-calls", tags=["stats"])
+router = APIRouter(prefix="/user-calls", tags=["stats"])
 
 
 #

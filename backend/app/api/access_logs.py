@@ -32,7 +32,7 @@ from app.api.dependencies import get_current_user
 # Create a dedicated router for access logs with a clean prefix and tag.
 # Prefix means all routes under here start with /api/access-logs,
 # and tagging lets docs group these endpoints together automatically.
-router = APIRouter(prefix="/api/access-logs", tags=["logs"])
+router = APIRouter(prefix="/access-logs", tags=["logs"])
 
 
 @router.get("/", response_model=List[AccessLogRead])

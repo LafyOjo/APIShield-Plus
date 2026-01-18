@@ -22,8 +22,14 @@ MAJOR_EVENTS = {
 # and whether it succeeded. If the action is in our whitelist,
 # we forward it to create_event() so it’s written to the DB.
 # Otherwise, we silently drop it.
-def log_event(db: Session, username: str | None, action: str, success: bool) -> None:
-    #Persist an event if it is considered major.
-    if action not in MAJOR_EVENTS:
+def log_event(
+    db: Session,
+    tenant_id: int | None,
+    username: str | None,
+    action: str,
+    success: bool,
+) -> None:
+    # Persist an event only when tenant context is available.
+    if action not in MAJOR_EVENTS or tenant_id is None:
         return
-    create_event(db, username, action, success)
+    create_event(db, tenant_id, username, action, success)

@@ -72,6 +72,10 @@ Canceling the prompt or entering the wrong password logs you out and
 returns to the login screen. Set `REAUTH_PER_REQUEST=false` in `.env` if
 you prefer to disable this extra check.
 
+## Identity model (multi-tenant)
+
+APIShield+ uses **global users** with **tenant memberships**. A user can belong to multiple tenants, and roles are scoped per membership (owner/admin/analyst/viewer). The active tenant is selected by the frontend and sent via `X-Tenant-ID`; tenant access is validated by membership on every request. JWTs remain user-scoped (no tenant_id/role claims). Use `POST /api/v1/tenants/{id}/switch` to validate access and fetch entitlements/settings before storing the active tenant in the client.
+
 Example `.env`:
 
 ```env
@@ -110,53 +114,35 @@ curl -i http://127.0.0.1:8001/api/access-logs \
   -H "X-API-Key: demo-key" \
   -H "X-Reauth-Password: secret"
 
-## Running the backend
+## Run locally (one command)
 
-1. Create and activate a virtual environment and install the requirements:
+### Docker Compose (recommended)
+1. `docker compose up --build`
+2. Backend: http://localhost:8001 (health: `/api/v1/health`)
+3. Frontend: http://localhost:3000 (proxies to backend)
+4. Postgres: localhost:5432 (user/pass/db: `postgres`/`postgres`/`apishield`)
+5. Compose mounts the repo for hot reload (backend uvicorn reload, frontend npm start).
 
+### Manual backend (no Docker)
 ```bash
 cd backend
 python3 -m venv .venv
-source .venv/Scripts/activate always check because sometimes some operating systems may save this in the libs/bin folder
+source .venv/bin/activate  # or .\.venv\Scripts\activate on Windows
 pip install -r requirements.txt
-# Packages are pinned to versions that ship wheels for Python 3.12. If
-# installation fails with compiler errors, make sure build tools such as
-# a C compiler and Rust are available.
-```
-
-2. Copy `backend/.env.example` to `backend/.env`. The example includes all
-   optional variables shown below, so your `.env` should match it unless you
-   change values.
-
-3. Run Alembic migrations to create the `alerts` table:
-
-```bash
+cp .env.example .env
 alembic upgrade head
-```
-**Note:** If `app.db` already exists from a previous run, `alembic upgrade head` may fail. Remove the file or run `alembic stamp head` before rerunning the upgrade.
-
-4. Load the variables from `.env` and start the API server:
-
-```bash
-set -a
-source .env
-set +a
 uvicorn app.main:app --reload --port 8001
 ```
 
-Prometheus metrics will be exposed at `http://localhost:8001/metrics`.
-
-## Running the frontend
-
+### Manual frontend (no Docker)
 ```bash
 cd frontend
 npm install
-npm start
+REACT_APP_API_BASE=http://localhost:8001/api/v1 npm start
 ```
 
-The dashboard uses the `REACT_APP_API_BASE` environment variable to reach the backend API. By default, requests are proxied to `http://localhost:8001`. If your API runs on a different host or port, set `REACT_APP_API_BASE` in `frontend/.env` or when starting the app (e.g., `REACT_APP_API_BASE=https://api.example.com npm start`). Set `REACT_APP_API_KEY` if the backend requires an `X-API-Key` header.
-
-The React application will be available at [http://localhost:3000](http://localhost:3000).
+### Smoke test
+With stack up: `BACKEND_URL=http://localhost:8001 scripts/smoke.sh`
 
 ## Starting the Demo Shop
 

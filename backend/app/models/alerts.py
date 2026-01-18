@@ -3,14 +3,16 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from pydantic import BaseModel
-from sqlalchemy import Column, DateTime, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String
 from app.core.db import Base
 
 
 class Alert(Base):
     __tablename__ = "alerts"
+    __table_args__ = (Index("ix_alerts_tenant_time", "tenant_id", "timestamp"),)
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True)
     ip_address = Column(String, nullable=False, index=True)
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
     total_fails = Column(Integer, nullable=False)

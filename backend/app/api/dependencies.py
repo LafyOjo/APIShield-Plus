@@ -75,9 +75,9 @@ async def get_current_user(
 # It runs get_current_user first, then checks that the user’s role
 # matches what the endpoint requires. Otherwise → 403 forbidden.
 def require_role(required: str):
-    def checker(user=Depends(get_current_user)):
-        if user.role != required:
-            raise HTTPException(status_code=403, detail="Insufficient role")
-        return user
+    """
+    Delegate to tenancy-aware role enforcement (single-role convenience).
+    """
+    from app.tenancy.dependencies import require_roles  # local import to avoid cycles
 
-    return checker
+    return require_roles([required], user_resolver=get_current_user)

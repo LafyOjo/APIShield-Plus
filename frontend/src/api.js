@@ -11,8 +11,9 @@
 # If it’s not set, I default to an empty string, which lets CRA’s proxy
 # handle routing during local development without me needing absolute URLs.
 */
-export const API_BASE =
-  (process.env.REACT_APP_API_BASE && process.env.REACT_APP_API_BASE.replace(/\/$/, "")) || "";
+const RAW_API_BASE = (process.env.REACT_APP_API_BASE && process.env.REACT_APP_API_BASE.replace(/\/$/, "")) || "";
+const API_VERSION_PREFIX = "/api/v1";
+export const API_BASE = RAW_API_BASE || "";
 export const API_KEY = process.env.REACT_APP_API_KEY || process.env.ZERO_TRUST_API_KEY || "";
 export const AUTH_TOKEN_KEY = "apiShieldAuthToken";
 export const TOKEN_KEY = AUTH_TOKEN_KEY; // legacy alias
@@ -100,7 +101,17 @@ export async function apiFetch(path, options = {}) {
   # initialized from the caller but I’ll add auth and keys below. This lets
   # app code remain declarative while security concerns stay centralized.
   */
-  const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
+  let resolvedPath = path;
+  if (!path.startsWith("http")) {
+    if (path.startsWith("/api/v1")) {
+      resolvedPath = path;
+    } else if (path.startsWith("/api/")) {
+      resolvedPath = `${API_VERSION_PREFIX}${path.slice(4)}`;
+    } else {
+      resolvedPath = `${API_VERSION_PREFIX}${path.startsWith("/") ? "" : "/"}${path}`;
+    }
+  }
+  const url = path.startsWith("http") ? path : `${API_BASE}${resolvedPath}`;
   const headers = { ...(fetchOptions.headers || {}) };
 
   /*

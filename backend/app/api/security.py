@@ -96,7 +96,7 @@ init_chain()
 # and get tagged as “security” in the docs. Keeping these controls
 # in a dedicated router makes them easy to find and to lock behind
 # admin-only authorization requirements.
-router = APIRouter(prefix="/api/security", tags=["security"])
+router = APIRouter(prefix="/security", tags=["security"])
 
 
 # ------------------------------------------------------------

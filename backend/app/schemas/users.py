@@ -14,3 +14,11 @@ class UserRead(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+class UserRegistrationResponse(BaseModel):
+    id: int
+    username: str
+    role: str
+    active_tenant_id: int
+    active_tenant_slug: str

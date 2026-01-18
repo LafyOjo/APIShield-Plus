@@ -15,10 +15,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from prometheus_client import Counter
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.db import get_db
+from app.crud.tenants import get_tenant_by_id, get_tenant_by_slug
+from app.crud.users import get_user_by_username
 from app.models.alerts import Alert
+from app.models.memberships import Membership
 import app.api.security as security
 from app.core.events import log_event
+from app.tenancy.constants import TENANT_HEADER
 
 router = APIRouter(
     prefix="",            
@@ -65,6 +70,41 @@ STUFFING_DETECTIONS = Counter(
 FAILED_USER_ATTEMPTS: Dict[int, list[datetime]] = {}
 
 
+def _resolve_tenant_id_for_username(
+    db: Session,
+    request: Request,
+    username: str | None,
+) -> int | None:
+    if request is None or not username:
+        return None
+    header_name = settings.TENANT_HEADER_NAME or TENANT_HEADER
+    tenant_hint = request.headers.get(header_name)
+    if not tenant_hint:
+        return None
+    tenant_value = tenant_hint.strip()
+    tenant = (
+        get_tenant_by_id(db, int(tenant_value))
+        if tenant_value.isdigit()
+        else get_tenant_by_slug(db, tenant_value)
+    )
+    if not tenant:
+        return None
+    user = get_user_by_username(db, username)
+    if not user:
+        return None
+    membership = (
+        db.query(Membership)
+        .filter(
+            Membership.tenant_id == tenant.id,
+            Membership.user_id == user.id,
+            Membership.status == "active",
+        )
+        .first()
+    )
+    if not membership:
+        return None
+    return tenant.id
+
 
 # Helper to check if a user_id has exceeded their failure
 # threshold within the configured window. This is per-user,
@@ -93,6 +133,7 @@ def record_attempt(
     user_id: int | None = None,
     fail_limit: int | None = None,
     username: str | None = None,
+    tenant_id: int | None = None,
 ) -> Dict[str, Any]:
     """Record a login attempt and return a JSON status."""
 
@@ -107,7 +148,7 @@ def record_attempt(
     if success:
         if user_id is not None:
             FAILED_USER_ATTEMPTS.pop(user_id, None)
-        log_event(db, username, "stuffing_attempt", True)
+        log_event(db, tenant_id, username, "stuffing_attempt", True)
         return {"status": "ok", "fails_last_minute": 0}
 
     # If failure, count how many recent fails for this IP
@@ -133,12 +174,12 @@ def record_attempt(
         FAILED_USER_ATTEMPTS[user_id] = attempts
 
     # Log failed attempt in event log
-    log_event(db, username, "stuffing_attempt", False)
+    log_event(db, tenant_id, username, "stuffing_attempt", False)
 
     # If security is enabled and too many fails → BLOCK
     if security.SECURITY_ENABLED and fail_count >= ip_fail_limit:
         STUFFING_DETECTIONS.labels(ip=client_ip).inc()
-        log_event(db, None, "stuffing_block", True)
+        log_event(db, tenant_id, None, "stuffing_block", True)
         alert = Alert(
             ip_address=client_ip,
             total_fails=fail_count + 1,
@@ -179,13 +220,19 @@ def score(payload: Dict[str, Any], request: Request, db: Session = Depends(get_d
     the frontend. It validates input, records attempts, and
     enforces credential stuffing protection rules.
     """
+    client_ip = payload.get("client_ip")
+    auth_result = payload.get("auth_result")
+    with_jwt = bool(payload.get("with_jwt"))
+    username = payload.get("username")
+    tenant_id = _resolve_tenant_id_for_username(db, request, username)
+
     if security.SECURITY_ENABLED:
         try:
             # Chain verification adds another Zero Trust layer
             security.verify_chain(request.headers.get("X-Chain-Password"))
         except HTTPException as exc:
             STUFFING_DETECTIONS.labels(ip=request.client.host).inc()
-            log_event(db, None, "stuffing_block", True)
+            log_event(db, tenant_id, None, "stuffing_block", True)
             alert = Alert(
                 ip_address=request.client.host,
                 total_fails=0,
@@ -196,11 +243,6 @@ def score(payload: Dict[str, Any], request: Request, db: Session = Depends(get_d
             db.refresh(alert)
             raise exc
 
-    client_ip = payload.get("client_ip")
-    auth_result = payload.get("auth_result")
-    with_jwt = bool(payload.get("with_jwt"))
-    username = payload.get("username")
-
     if client_ip is None or auth_result not in ("success", "failure"):
         raise HTTPException(status_code=422, detail="Invalid payload")
 
@@ -210,4 +252,5 @@ def score(payload: Dict[str, Any], request: Request, db: Session = Depends(get_d
         auth_result == "success",
         with_jwt=with_jwt,
         username=username,
+        tenant_id=tenant_id,
     )

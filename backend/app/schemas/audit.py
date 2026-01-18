@@ -20,6 +20,7 @@ class AuditLogCreate(BaseModel):
 
 class AuditLogRead(AuditLogCreate):
     id: int
+    tenant_id: int
     timestamp: datetime
 
     class Config:
