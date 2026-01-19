@@ -56,3 +56,13 @@ class Website(TimestampMixin, Base):
         foreign_keys=[created_by_user_id],
         lazy="selectin",
     )
+    behaviour_events = relationship(
+        "BehaviourEvent",
+        back_populates="website",
+        lazy="noload",
+    )
+    behaviour_sessions = relationship(
+        "BehaviourSession",
+        back_populates="website",
+        lazy="noload",
+    )

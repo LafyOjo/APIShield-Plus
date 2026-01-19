@@ -32,9 +32,14 @@ def create_tenant(
     tenant = Tenant(name=name, slug=unique_slug, created_by_user_id=created_by_user_id)
     db.add(tenant)
     db.flush()
-    create_default_settings(db, tenant.id)
-    create_default_policies(db, tenant.id)
     default_plan = get_plan_by_name(db, "Free")
+    raw_ip_retention_days = None
+    if default_plan:
+        limit_value = (default_plan.limits_json or {}).get("raw_ip_retention_days")
+        if isinstance(limit_value, int) and limit_value > 0:
+            raw_ip_retention_days = limit_value
+    create_default_settings(db, tenant.id, raw_ip_retention_days=raw_ip_retention_days)
+    create_default_policies(db, tenant.id)
     seed_entitlements_from_plan(db, tenant.id, default_plan)
     try:
         db.commit()
@@ -60,7 +65,12 @@ def provision_tenant_defaults(
         created_by_user_id=owner_user.id,
     )
     db.add(membership)
-    create_default_settings(db, tenant.id)
+    raw_ip_retention_days = None
+    if plan:
+        limit_value = (plan.limits_json or {}).get("raw_ip_retention_days")
+        if isinstance(limit_value, int) and limit_value > 0:
+            raw_ip_retention_days = limit_value
+    create_default_settings(db, tenant.id, raw_ip_retention_days=raw_ip_retention_days)
     create_default_policies(db, tenant.id)
     db.add(
         Subscription(

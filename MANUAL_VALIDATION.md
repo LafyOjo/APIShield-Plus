@@ -94,3 +94,10 @@ The following checklist verifies basic end-to-end functionality of the demo stac
    ```
 
 Actual IDs and timestamps will vary between runs.
+
+8. **Security map UI**
+   - Log into the dashboard, click **Security Map** in the header.
+   - Select a tenant and confirm the Summary API loads (no errors).
+   - Verify the map tiles render and clustered markers appear (if geo data exists).
+   - Adjust time range/category/website filters; the map updates after a short debounce.
+   - Switch tenants and confirm the results change.

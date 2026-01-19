@@ -18,6 +18,7 @@ import LoginForm from "./LoginForm";
 import AttackSim from "./AttackSim";
 import UserAccounts from "./UserAccounts";
 import LoginStatus from "./LoginStatus";
+import SecurityMapPage from "./SecurityMapPage";
 import "./App.css";
 
 /*
@@ -34,6 +35,7 @@ function App() {
   # to “nudge” children without complex state machinery.
   */
   const [refreshKey, setRefreshKey] = useState(0);
+  const [currentRoute, setCurrentRoute] = useState(window.location.pathname);
 
   /*
   # token keeps track of whether a user is logged in.
@@ -89,6 +91,12 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const handlePop = () => setCurrentRoute(window.location.pathname);
+    window.addEventListener("popstate", handlePop);
+    return () => window.removeEventListener("popstate", handlePop);
+  }, []);
+
   /*
   # Whenever token changes (login/logout), bump refreshKey.
   # This signals children like AlertsTable to pull fresh data,
@@ -112,6 +120,17 @@ function App() {
     if (username) localStorage.removeItem(USERNAME_KEY);
     setToken(null);
   };
+
+  const navigate = (path) => {
+    if (window.location.pathname === path) return;
+    window.history.pushState({}, "", path);
+    setCurrentRoute(path);
+  };
+
+  const isMapRoute =
+    currentRoute.startsWith("/dashboard/security/map") ||
+    currentRoute.startsWith("/map") ||
+    currentRoute.startsWith("/dashboard/map");
 
   /*
   # If no token: show login screen instead of the dashboard.
@@ -150,6 +169,18 @@ function App() {
       <header className="header bar">
         <h1 className="dashboard-header">APIShield+ Dashboard</h1>
         <div className="row">
+          <button
+            className={`btn secondary nav-tab ${!isMapRoute ? "active" : ""}`}
+            onClick={() => navigate("/")}
+          >
+            Overview
+          </button>
+          <button
+            className={`btn secondary nav-tab ${isMapRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/security/map")}
+          >
+            Security Map
+          </button>
           <button className="btn secondary" onClick={toggleTheme}>
             {isDark ? "Light mode" : "Dark mode"}
           </button>
@@ -159,38 +190,44 @@ function App() {
         </div>
       </header>
 
-      <section className="card">
-        <UserAccounts onSelect={setSelectedUser} />
-      </section>
+      {isMapRoute ? (
+        <SecurityMapPage />
+      ) : (
+        <>
+          <section className="card">
+            <UserAccounts onSelect={setSelectedUser} />
+          </section>
 
-      <section className="card">
-        <LoginStatus token={token} />
-      </section>
+          <section className="card">
+            <LoginStatus token={token} />
+          </section>
 
-      <section className="card">
-        <ScoreForm token={token} onNewAlert={() => setRefreshKey((k) => k + 1)} />
-      </section>
+          <section className="card">
+            <ScoreForm token={token} onNewAlert={() => setRefreshKey((k) => k + 1)} />
+          </section>
 
-      <section className="card">
-        <AlertsChart token={token} />
-      </section>
+          <section className="card">
+            <AlertsChart token={token} />
+          </section>
 
-      <section className="card">
-        <AlertsTable refresh={refreshKey} />
-      </section>
+          <section className="card">
+            <AlertsTable refresh={refreshKey} />
+          </section>
 
-      <section className="card">
-        <EventsTable />
-      </section>
+          <section className="card">
+            <EventsTable />
+          </section>
 
-      <section className="card">
-        <div className="attack-section">
-          <AttackSim user={selectedUser} />
-          <div className="security-box">
-            <SecurityToggle />
-          </div>
-        </div>
-      </section>
+          <section className="card">
+            <div className="attack-section">
+              <AttackSim user={selectedUser} />
+              <div className="security-box">
+                <SecurityToggle />
+              </div>
+            </div>
+          </section>
+        </>
+      )}
     </div>
   );
 }

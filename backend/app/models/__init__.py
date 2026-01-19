@@ -1,6 +1,11 @@
 from .alerts import Alert
 from .users import User
 from .events import Event
+from .behaviour_events import BehaviourEvent
+from .behaviour_sessions import BehaviourSession
+from .anomaly_signals import AnomalySignalEvent
+from .ip_enrichments import IPEnrichment
+from .geo_event_aggs import GeoEventAgg
 from .access_logs import AccessLog
 from .policies import Policy
 from .audit_logs import AuditLog
@@ -26,6 +31,11 @@ __all__ = [
     "Alert",
     "User",
     "Event",
+    "BehaviourEvent",
+    "BehaviourSession",
+    "AnomalySignalEvent",
+    "IPEnrichment",
+    "GeoEventAgg",
     "AccessLog",
     "Policy",
     "AuditLog",

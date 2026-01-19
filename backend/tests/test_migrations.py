@@ -52,6 +52,11 @@ def test_migration_upgrade_downgrade_cycle(tmp_path):
         "website_tags",
         "user_profiles",
         "invites",
+        "behaviour_events",
+        "behaviour_sessions",
+        "anomaly_signal_events",
+        "ip_enrichments",
+        "geo_event_aggs",
     }
     assert expected.issubset(tables)
 

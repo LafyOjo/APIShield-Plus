@@ -30,6 +30,9 @@ ALLOWED_PATHS = {
     "/docs/oauth2-redirect",
     "/metrics",
     "/api/audit/log",  # logs need to flow even if API key is missing
+    "/ingest/browser",
+    "/api/ingest/browser",
+    "/api/v1/ingest/browser",
 }
 
 
@@ -47,15 +50,10 @@ class ZeroTrustMiddleware(BaseHTTPMiddleware):
 
         # Step 3: Allow public paths to bypass API key enforcement.
         # Without this, even login and docs would fail with 401.
-        if request.url.path in {"/ping", "/login", "/register", "/api/token"}:
+        if request.url.path in ALLOWED_PATHS:
             return await call_next(request)
 
-        # Step 4: Special-case the audit log route. Audit must log
-        # even failed or pre-auth attempts, so we never block it.
-        if request.url.path == "/api/audit/log":
-            return await call_next(request)
-
-        # Step 5: Enforce the API key by checking the X-API-Key
+        # Step 4: Enforce the API key by checking the X-API-Key
         # header. If it’s wrong or missing, log the incident and
         # return 401 Unauthorized to the caller.
         header = request.headers.get("X-API-Key")

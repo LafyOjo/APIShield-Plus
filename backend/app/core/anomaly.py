@@ -2,6 +2,7 @@
 # simple feature (path length). If the score looks outlier-ish, we block it.
 # It’s demo-friendly and optional: if sklearn/numpy aren’t installed, it’s a no-op.
 
+from dataclasses import dataclass
 from typing import Any
 import os
 from fastapi import Request
@@ -19,6 +20,38 @@ except Exception:  # pragma: no cover - library may not be installed for tests
     IsolationForest = None  # type: ignore
     LocalOutlierFactor = None  # type: ignore
     np = None  # type: ignore
+
+
+@dataclass(frozen=True)
+class AnomalyContext:
+    tenant_id: int
+    website_id: int
+    environment_id: int
+    session_id: str | None
+    event_id: str | None
+
+
+@dataclass(frozen=True)
+class AnomalySignal:
+    type: str
+    severity: str
+    evidence: dict[str, Any]
+
+
+def evaluate_event_for_anomaly(ctx: AnomalyContext, event) -> list[AnomalySignal]:
+    event_type = getattr(event, "type", None) or getattr(event, "event_type", None)
+    if event_type == "error":
+        return [
+            AnomalySignal(
+                type="js_error_event",
+                severity="low",
+                evidence={
+                    "event_id": ctx.event_id,
+                    "session_id": ctx.session_id,
+                },
+            )
+        ]
+    return []
 
 
 class _Model:

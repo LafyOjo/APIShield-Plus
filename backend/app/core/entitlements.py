@@ -13,6 +13,7 @@ ALLOWED_FEATURES = {
     "prescriptions",
     "advanced_alerting",
     "priority_support",
+    "geo_map",
 }
 
 ALLOWED_ENTITLEMENT_SOURCES = {

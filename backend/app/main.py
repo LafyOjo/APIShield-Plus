@@ -46,6 +46,9 @@ from app.api.memberships import router as memberships_router
 from app.api.tenants import router as tenants_router
 from app.api.me import router as me_router
 from app.api.websites import router as websites_router
+from app.api.ingest import router as ingest_router
+from app.api.analytics import router as analytics_router
+from app.api.map import router as map_router
 
 # Create DB tables right away so the app doesn’t hit missing
 # schema issues later. This runs once on startup.
@@ -104,6 +107,9 @@ routers = [
     memberships_router,
     tenants_router,
     websites_router,
+    ingest_router,
+    analytics_router,
+    map_router,
 ]
 
 for r in routers:

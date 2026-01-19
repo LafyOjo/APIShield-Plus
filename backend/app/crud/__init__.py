@@ -1,6 +1,8 @@
 from .alerts import get_all_alerts
 from .users import get_user_by_username, create_user
 from .events import create_event, get_events
+from .behaviour_events import create_behaviour_event, get_behaviour_event_by_event_id
+from .behaviour_sessions import get_behaviour_session, upsert_behaviour_session
 from .auth_events import create_auth_event, get_auth_events
 from .policies import get_policy_by_id, create_policy, get_policy_for_user
 from .audit import create_audit_log, get_audit_logs
@@ -107,6 +109,10 @@ __all__ = [
     "create_user",
     "create_event",
     "get_events",
+    "create_behaviour_event",
+    "get_behaviour_event_by_event_id",
+    "get_behaviour_session",
+    "upsert_behaviour_session",
     "create_auth_event",
     "get_auth_events",
     "get_policy_by_id",

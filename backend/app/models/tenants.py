@@ -61,3 +61,13 @@ class Tenant(TimestampMixin, Base):
         back_populates="tenant",
         lazy="selectin",
     )
+    behaviour_events = relationship(
+        "BehaviourEvent",
+        back_populates="tenant",
+        lazy="noload",
+    )
+    behaviour_sessions = relationship(
+        "BehaviourSession",
+        back_populates="tenant",
+        lazy="noload",
+    )

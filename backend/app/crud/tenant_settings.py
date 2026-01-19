@@ -12,13 +12,19 @@ def _default_alert_prefs() -> dict:
     }
 
 
-def create_default_settings(db: Session, tenant_id: int) -> TenantSettings:
+def create_default_settings(
+    db: Session,
+    tenant_id: int,
+    *,
+    raw_ip_retention_days: int | None = None,
+) -> TenantSettings:
+    default_raw_ip_days = 7 if raw_ip_retention_days is None else raw_ip_retention_days
     settings_row = TenantSettings(
         tenant_id=tenant_id,
         timezone="UTC",
         retention_days=30,
         event_retention_days=30,
-        ip_raw_retention_days=7,
+        ip_raw_retention_days=default_raw_ip_days,
         alert_prefs=_default_alert_prefs(),
     )
     db.add(settings_row)
@@ -34,7 +40,22 @@ def get_settings(db: Session, tenant_id: int) -> TenantSettings:
     )
     if settings_row:
         return settings_row
-    settings_row = create_default_settings(db, tenant_id)
+    raw_ip_retention_days = None
+    try:
+        from app.core.entitlements import get_tenant_plan
+
+        plan = get_tenant_plan(db, tenant_id)
+        if plan:
+            limit_value = (plan.limits_json or {}).get("raw_ip_retention_days")
+            if isinstance(limit_value, int) and limit_value > 0:
+                raw_ip_retention_days = limit_value
+    except Exception:
+        raw_ip_retention_days = None
+    settings_row = create_default_settings(
+        db,
+        tenant_id,
+        raw_ip_retention_days=raw_ip_retention_days,
+    )
     db.commit()
     db.refresh(settings_row)
     return settings_row

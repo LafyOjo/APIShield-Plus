@@ -18,6 +18,7 @@ export const API_KEY = process.env.REACT_APP_API_KEY || process.env.ZERO_TRUST_A
 export const AUTH_TOKEN_KEY = "apiShieldAuthToken";
 export const TOKEN_KEY = AUTH_TOKEN_KEY; // legacy alias
 export const USERNAME_KEY = "apiShieldUsername";
+export const ACTIVE_TENANT_KEY = "apiShieldActiveTenant";
 
 let FORCE_REAUTH_EVERY_CLICK = false; // global switch
 
@@ -144,6 +145,15 @@ export async function apiFetch(path, options = {}) {
   */
   if (API_KEY && !("X-API-Key" in headers)) {
     headers["X-API-Key"] = API_KEY;
+  }
+
+  /*
+  # Tenant context: if the UI has an active tenant selection stored,
+  # attach it to every request so tenant-scoped endpoints resolve correctly.
+  */
+  const activeTenant = localStorage.getItem(ACTIVE_TENANT_KEY);
+  if (activeTenant && !("X-Tenant-ID" in headers)) {
+    headers["X-Tenant-ID"] = activeTenant;
   }
 
   /*

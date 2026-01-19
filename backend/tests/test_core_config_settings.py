@@ -23,6 +23,21 @@ def _load_settings(monkeypatch, extra_env=None):
         "TRUST_PROXY_HEADERS",
         "TRUSTED_PROXY_IPS",
         "TRUSTED_IP_HEADERS",
+        "ALLOW_RAW_IP_SECURITY_ENDPOINTS",
+        "INGEST_DEFAULT_RPM",
+        "INGEST_DEFAULT_BURST",
+        "INGEST_IP_RPM",
+        "INGEST_IP_BURST",
+        "INGEST_MAX_BODY_BYTES",
+        "INGEST_INVALID_BAN_THRESHOLD",
+        "INGEST_INVALID_WINDOW_SECONDS",
+        "INGEST_BAN_SECONDS",
+        "GEO_PROVIDER",
+        "GEO_DB_PATH",
+        "GEO_ASN_DB_PATH",
+        "GEO_API_KEY",
+        "GEO_API_BASE_URL",
+        "GEO_ENRICHMENT_TTL_DAYS",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -59,6 +74,21 @@ def test_settings_defaults(monkeypatch):
         "X-Forwarded-For",
         "X-Real-IP",
     ]
+    assert cfg.ALLOW_RAW_IP_SECURITY_ENDPOINTS is False
+    assert cfg.INGEST_DEFAULT_RPM == 120
+    assert cfg.INGEST_DEFAULT_BURST == 120
+    assert cfg.INGEST_IP_RPM == 300
+    assert cfg.INGEST_IP_BURST == 300
+    assert cfg.INGEST_MAX_BODY_BYTES == 65536
+    assert cfg.INGEST_INVALID_BAN_THRESHOLD == 20
+    assert cfg.INGEST_INVALID_WINDOW_SECONDS == 60
+    assert cfg.INGEST_BAN_SECONDS == 600
+    assert cfg.GEO_PROVIDER == "local"
+    assert cfg.GEO_DB_PATH == "/data/geo/GeoLite2-City.mmdb"
+    assert cfg.GEO_ASN_DB_PATH == "/data/geo/GeoLite2-ASN.mmdb"
+    assert cfg.GEO_API_KEY is None
+    assert cfg.GEO_API_BASE_URL is None
+    assert cfg.GEO_ENRICHMENT_TTL_DAYS == 30
 
 
 def test_settings_env_overrides(monkeypatch):
@@ -81,6 +111,21 @@ def test_settings_env_overrides(monkeypatch):
             "TRUST_PROXY_HEADERS": "true",
             "TRUSTED_PROXY_IPS": '["10.0.0.0/8","192.168.0.0/16"]',
             "TRUSTED_IP_HEADERS": '["X-Forwarded-For","X-Real-IP"]',
+            "ALLOW_RAW_IP_SECURITY_ENDPOINTS": "true",
+            "INGEST_DEFAULT_RPM": "99",
+            "INGEST_DEFAULT_BURST": "101",
+            "INGEST_IP_RPM": "150",
+            "INGEST_IP_BURST": "200",
+            "INGEST_MAX_BODY_BYTES": "12345",
+            "INGEST_INVALID_BAN_THRESHOLD": "11",
+            "INGEST_INVALID_WINDOW_SECONDS": "22",
+            "INGEST_BAN_SECONDS": "333",
+            "GEO_PROVIDER": "api",
+            "GEO_DB_PATH": "/tmp/city.mmdb",
+            "GEO_ASN_DB_PATH": "/tmp/asn.mmdb",
+            "GEO_API_KEY": "geo-key",
+            "GEO_API_BASE_URL": "https://geo.example.com",
+            "GEO_ENRICHMENT_TTL_DAYS": "7",
         },
     )
     cfg = Settings(_env_file=None)
@@ -98,6 +143,21 @@ def test_settings_env_overrides(monkeypatch):
     assert cfg.TRUST_PROXY_HEADERS is True
     assert cfg.TRUSTED_PROXY_IPS == ["10.0.0.0/8", "192.168.0.0/16"]
     assert cfg.TRUSTED_IP_HEADERS == ["X-Forwarded-For", "X-Real-IP"]
+    assert cfg.ALLOW_RAW_IP_SECURITY_ENDPOINTS is True
+    assert cfg.INGEST_DEFAULT_RPM == 99
+    assert cfg.INGEST_DEFAULT_BURST == 101
+    assert cfg.INGEST_IP_RPM == 150
+    assert cfg.INGEST_IP_BURST == 200
+    assert cfg.INGEST_MAX_BODY_BYTES == 12345
+    assert cfg.INGEST_INVALID_BAN_THRESHOLD == 11
+    assert cfg.INGEST_INVALID_WINDOW_SECONDS == 22
+    assert cfg.INGEST_BAN_SECONDS == 333
+    assert cfg.GEO_PROVIDER == "api"
+    assert cfg.GEO_DB_PATH == "/tmp/city.mmdb"
+    assert cfg.GEO_ASN_DB_PATH == "/tmp/asn.mmdb"
+    assert cfg.GEO_API_KEY == "geo-key"
+    assert cfg.GEO_API_BASE_URL == "https://geo.example.com"
+    assert cfg.GEO_ENRICHMENT_TTL_DAYS == 7
     assert cfg.DATABASE_URL == "sqlite:///:memory:"
     assert cfg.SECRET_KEY == "override"
 

@@ -24,3 +24,13 @@ class WebsiteEnvironment(TimestampMixin, Base):
 
     website = relationship("Website", back_populates="environments", lazy="selectin")
     api_keys = relationship("APIKey", back_populates="environment", lazy="selectin")
+    behaviour_events = relationship(
+        "BehaviourEvent",
+        back_populates="environment",
+        lazy="noload",
+    )
+    behaviour_sessions = relationship(
+        "BehaviourSession",
+        back_populates="environment",
+        lazy="noload",
+    )

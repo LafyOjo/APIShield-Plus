@@ -78,8 +78,30 @@ class Settings(BaseSettings):
         ]
     )
 
+    # Security analytics endpoints
+    ALLOW_RAW_IP_SECURITY_ENDPOINTS: bool = False
+
+    # Ingestion rate limiting + abuse protection
+    INGEST_DEFAULT_RPM: int = 120
+    INGEST_DEFAULT_BURST: int = 120
+    INGEST_IP_RPM: int = 300
+    INGEST_IP_BURST: int = 300
+    INGEST_MAX_BODY_BYTES: int = 65536
+    INGEST_INVALID_BAN_THRESHOLD: int = 20
+    INGEST_INVALID_WINDOW_SECONDS: int = 60
+    INGEST_BAN_SECONDS: int = 600
+
     # External integration encryption (base64 Fernet key recommended).
     INTEGRATION_ENCRYPTION_KEY: Optional[str] = None
+
+    # Geo enrichment strategy and configuration.
+    # GEO_PROVIDER: "local" or "api"
+    GEO_PROVIDER: str = "local"
+    GEO_DB_PATH: str = "/data/geo/GeoLite2-City.mmdb"
+    GEO_ASN_DB_PATH: str = "/data/geo/GeoLite2-ASN.mmdb"
+    GEO_API_KEY: Optional[str] = None
+    GEO_API_BASE_URL: Optional[str] = None
+    GEO_ENRICHMENT_TTL_DAYS: int = 30
 
     @field_validator("TENANT_CONTEXT_RESOLUTION_ORDER", mode="before")
     @classmethod
