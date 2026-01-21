@@ -4,6 +4,7 @@ import argparse
 import logging
 from datetime import timedelta, timezone
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -15,6 +16,7 @@ from app.models.audit_logs import AuditLog
 from app.models.behaviour_events import BehaviourEvent
 from app.models.events import Event
 from app.models.ip_enrichments import IPEnrichment
+from app.models.security_events import SecurityEvent
 
 
 logger = logging.getLogger(__name__)
@@ -95,6 +97,21 @@ def _latest_client_ip(db: Session, tenant_id: int, ip_hash: str) -> str | None:
     )
     consider(audit)
 
+    security_event = (
+        db.query(
+            SecurityEvent.client_ip,
+            func.coalesce(SecurityEvent.event_ts, SecurityEvent.created_at),
+        )
+        .filter(
+            SecurityEvent.tenant_id == tenant_id,
+            SecurityEvent.ip_hash == ip_hash,
+            SecurityEvent.client_ip.isnot(None),
+        )
+        .order_by(func.coalesce(SecurityEvent.event_ts, SecurityEvent.created_at).desc())
+        .first()
+    )
+    consider(security_event)
+
     return best_ip
 
 
@@ -125,6 +142,20 @@ def _candidate_ip_hashes(db: Session, since) -> list[tuple[int, str]]:
         .all()
     )
     for tenant_id, ip_hash in alert_rows:
+        if tenant_id is None or not ip_hash:
+            continue
+        candidates.add((tenant_id, ip_hash))
+
+    security_rows = (
+        db.query(SecurityEvent.tenant_id, SecurityEvent.ip_hash)
+        .filter(
+            func.coalesce(SecurityEvent.event_ts, SecurityEvent.created_at) >= since,
+            SecurityEvent.ip_hash.isnot(None),
+        )
+        .distinct()
+        .all()
+    )
+    for tenant_id, ip_hash in security_rows:
         if tenant_id is None or not ip_hash:
             continue
         candidates.add((tenant_id, ip_hash))

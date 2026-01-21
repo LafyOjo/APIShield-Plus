@@ -1,4 +1,5 @@
 from sqlalchemy import Column, ForeignKey, Integer, String, JSON
+from sqlalchemy import Float
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
@@ -21,6 +22,7 @@ class TenantSettings(TimestampMixin, Base):
     retention_days = Column(Integer, nullable=False, default=30)
     event_retention_days = Column(Integer, nullable=False, default=30)
     ip_raw_retention_days = Column(Integer, nullable=False, default=7)
+    default_revenue_per_conversion = Column(Float, nullable=True)
     alert_prefs = Column(JSON_TYPE, nullable=False, default=dict)
 
     tenant = relationship("Tenant", back_populates="settings", lazy="selectin")

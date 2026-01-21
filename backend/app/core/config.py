@@ -143,6 +143,14 @@ class Settings(BaseSettings):
     # Metrics scrapers point here.
     PROMETHEUS_URL: str = "http://kube-prom-kube-prometheus-prometheus.monitoring.svc:9090"
 
+    # Incident status automation thresholds.
+    INCIDENT_INVESTIGATING_DELTA_RATE: float = 0.05
+    INCIDENT_MITIGATION_RECOVERY_RATIO: float = 0.7
+    INCIDENT_MITIGATION_ERROR_DROP: float = 0.05
+    INCIDENT_MITIGATION_THREAT_DROP: int = 1
+    INCIDENT_RESOLVE_COOLDOWN_HOURS: int = 6
+    INCIDENT_RESOLVE_CONVERSION_TOLERANCE: float = 0.05
+
 
 # Instantiate a single settings object for app-wide import.
 # Any module can just `from app.core.config import settings`.

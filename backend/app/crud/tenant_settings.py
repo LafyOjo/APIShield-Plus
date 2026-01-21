@@ -17,6 +17,7 @@ def create_default_settings(
     tenant_id: int,
     *,
     raw_ip_retention_days: int | None = None,
+    default_revenue_per_conversion: float | None = None,
 ) -> TenantSettings:
     default_raw_ip_days = 7 if raw_ip_retention_days is None else raw_ip_retention_days
     settings_row = TenantSettings(
@@ -25,6 +26,7 @@ def create_default_settings(
         retention_days=30,
         event_retention_days=30,
         ip_raw_retention_days=default_raw_ip_days,
+        default_revenue_per_conversion=default_revenue_per_conversion,
         alert_prefs=_default_alert_prefs(),
     )
     db.add(settings_row)
@@ -73,6 +75,11 @@ def update_settings(db: Session, tenant_id: int, changes: dict) -> TenantSetting
         settings_row.retention_days = changes["event_retention_days"]
     if "ip_raw_retention_days" in changes and changes["ip_raw_retention_days"] is not None:
         settings_row.ip_raw_retention_days = changes["ip_raw_retention_days"]
+    if (
+        "default_revenue_per_conversion" in changes
+        and changes["default_revenue_per_conversion"] is not None
+    ):
+        settings_row.default_revenue_per_conversion = changes["default_revenue_per_conversion"]
     if "alert_prefs" in changes and changes["alert_prefs"] is not None:
         current = settings_row.alert_prefs or {}
         incoming = changes["alert_prefs"]

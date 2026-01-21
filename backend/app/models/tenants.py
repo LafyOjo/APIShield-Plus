@@ -61,6 +61,15 @@ class Tenant(TimestampMixin, Base):
         back_populates="tenant",
         lazy="selectin",
     )
+    notification_channels = relationship(
+        "NotificationChannel",
+        back_populates="tenant",
+        lazy="selectin",
+    )
+    notification_rules = relationship(
+        "NotificationRule",
+        lazy="selectin",
+    )
     behaviour_events = relationship(
         "BehaviourEvent",
         back_populates="tenant",

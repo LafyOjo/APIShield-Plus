@@ -101,3 +101,11 @@ Actual IDs and timestamps will vary between runs.
    - Verify the map tiles render and clustered markers appear (if geo data exists).
    - Adjust time range/category/website filters; the map updates after a short debounce.
    - Switch tenants and confirm the results change.
+
+9. **Revenue Integrity incident detail**
+   - Open `/dashboard/revenue-integrity/incidents` and choose any incident.
+   - Confirm prescriptions are grouped by priority with status chips and notes fields.
+   - If your role is analyst/admin/owner, apply a prescription and verify the status updates.
+   - Verify the applied history shows who applied the action and when.
+   - If recovery measurements exist, confirm recovery score and before/after metrics render.
+   - Timeline should include incident start/end, applied actions, and recovery checks.

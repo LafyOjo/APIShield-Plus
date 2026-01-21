@@ -108,6 +108,7 @@ def switch_tenant_endpoint(
             "retention_days": settings_snapshot.retention_days,
             "event_retention_days": settings_snapshot.event_retention_days,
             "ip_raw_retention_days": settings_snapshot.ip_raw_retention_days,
+            "default_revenue_per_conversion": settings_snapshot.default_revenue_per_conversion,
             "alert_prefs": settings_snapshot.alert_prefs,
         },
         "plan_name": entitlements.get("plan_name"),

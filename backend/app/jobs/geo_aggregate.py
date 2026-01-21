@@ -5,7 +5,7 @@ import logging
 from datetime import timedelta, timezone
 from typing import Any
 
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -13,17 +13,25 @@ from app.core.entitlements import resolve_effective_entitlements
 from app.core.db import SessionLocal
 from app.core.time import utcnow
 from app.models.alerts import Alert
-from app.models.audit_logs import AuditLog
 from app.models.behaviour_events import BehaviourEvent
 from app.models.events import Event
 from app.models.geo_event_aggs import GeoEventAgg
 from app.models.ip_enrichments import IPEnrichment
+from app.models.security_events import SecurityEvent
+from app.security.taxonomy import (
+    SecurityEventTypeEnum,
+    SecurityCategoryEnum,
+    SeverityEnum,
+    get_category,
+    get_severity,
+)
 
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_LOOKBACK_MINUTES = 60
 DEFAULT_MAX_BUCKETS = 5000
+BEHAVIOUR_CATEGORY = "behaviour"
 
 
 def _ensure_aware(value):
@@ -64,13 +72,60 @@ def _apply_granularity(row: dict[str, Any], country_only: bool) -> dict[str, Any
     return row
 
 
+def _coerce_category(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return SecurityCategoryEnum(value).value
+    except ValueError:
+        return None
+
+
+def _coerce_severity(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return SeverityEnum(value).value
+    except ValueError:
+        return None
+
+
+def _map_event_action(action: str | None, success: bool | None) -> SecurityEventTypeEnum | None:
+    normalized = (action or "").lower()
+    if "login" in normalized:
+        return (
+            SecurityEventTypeEnum.LOGIN_ATTEMPT_FAILED
+            if success is False
+            else SecurityEventTypeEnum.LOGIN_ATTEMPT
+        )
+    if "stuffing" in normalized:
+        if "block" in normalized:
+            return SecurityEventTypeEnum.CREDENTIAL_STUFFING_BLOCKED
+        return SecurityEventTypeEnum.CREDENTIAL_STUFFING
+    return None
+
+
+def _map_alert_type(detail: str | None) -> SecurityEventTypeEnum:
+    normalized = (detail or "").lower()
+    if "blocked" in normalized:
+        return SecurityEventTypeEnum.CREDENTIAL_STUFFING_BLOCKED
+    return SecurityEventTypeEnum.BRUTE_FORCE
+
+
+def _map_behaviour_category(event_type: str | None) -> str:
+    normalized = (event_type or "").lower()
+    if normalized == "error":
+        return SecurityCategoryEnum.ANOMALY.value
+    return BEHAVIOUR_CATEGORY
+
+
 def _iter_behaviour_rows(db: Session, since):
     rows = (
         db.query(
             BehaviourEvent.tenant_id,
             BehaviourEvent.website_id,
             BehaviourEvent.environment_id,
-            BehaviourEvent.ingested_at,
+            BehaviourEvent.event_ts.label("event_time"),
             BehaviourEvent.event_type,
             IPEnrichment.country_code,
             IPEnrichment.region,
@@ -89,21 +144,77 @@ def _iter_behaviour_rows(db: Session, since):
             ),
         )
         .filter(
-            BehaviourEvent.ingested_at >= since,
+            BehaviourEvent.event_ts >= since,
             BehaviourEvent.ip_hash.isnot(None),
             IPEnrichment.lookup_status == "ok",
         )
         .all()
     )
     for row in rows:
-        category = "error" if row.event_type == "error" else "behaviour"
+        category = _map_behaviour_category(row.event_type)
         yield {
             "tenant_id": row.tenant_id,
             "website_id": row.website_id,
             "environment_id": row.environment_id,
-            "event_time": row.ingested_at,
+            "event_time": row.event_time,
             "event_category": category,
             "severity": None,
+            "country_code": row.country_code,
+            "region": row.region,
+            "city": row.city,
+            "latitude": row.latitude,
+            "longitude": row.longitude,
+            "asn_number": row.asn_number,
+            "asn_org": row.asn_org,
+            "is_datacenter": row.is_datacenter,
+        }
+
+
+def _iter_security_event_rows(db: Session, since):
+    event_time_expr = func.coalesce(SecurityEvent.event_ts, SecurityEvent.created_at).label("event_time")
+    rows = (
+        db.query(
+            SecurityEvent.tenant_id,
+            SecurityEvent.website_id,
+            SecurityEvent.environment_id,
+            event_time_expr,
+            SecurityEvent.category,
+            SecurityEvent.severity,
+            IPEnrichment.country_code,
+            IPEnrichment.region,
+            IPEnrichment.city,
+            IPEnrichment.latitude,
+            IPEnrichment.longitude,
+            IPEnrichment.asn_number,
+            IPEnrichment.asn_org,
+            IPEnrichment.is_datacenter,
+        )
+        .join(
+            IPEnrichment,
+            and_(
+                SecurityEvent.tenant_id == IPEnrichment.tenant_id,
+                SecurityEvent.ip_hash == IPEnrichment.ip_hash,
+            ),
+        )
+        .filter(
+            event_time_expr >= since,
+            SecurityEvent.ip_hash.isnot(None),
+            IPEnrichment.lookup_status == "ok",
+        )
+        .all()
+    )
+    for row in rows:
+        category = _coerce_category(row.category)
+        severity = _coerce_severity(row.severity)
+        if not category or not severity:
+            continue
+        yield {
+            "tenant_id": row.tenant_id,
+            "website_id": row.website_id,
+            "environment_id": row.environment_id,
+            "event_time": row.event_time,
+            "event_category": category,
+            "severity": severity,
             "country_code": row.country_code,
             "region": row.region,
             "city": row.city,
@@ -120,6 +231,7 @@ def _iter_alert_rows(db: Session, since):
         db.query(
             Alert.tenant_id,
             Alert.timestamp,
+            Alert.detail,
             IPEnrichment.country_code,
             IPEnrichment.region,
             IPEnrichment.city,
@@ -142,13 +254,16 @@ def _iter_alert_rows(db: Session, since):
         .all()
     )
     for row in rows:
+        event_type = _map_alert_type(row.detail)
+        category = get_category(event_type).value
+        severity = get_severity(event_type).value
         yield {
             "tenant_id": row.tenant_id,
             "website_id": None,
             "environment_id": None,
             "event_time": row.timestamp,
-            "event_category": "threat",
-            "severity": None,
+            "event_category": category,
+            "severity": severity,
             "country_code": row.country_code,
             "region": row.region,
             "city": row.city,
@@ -188,9 +303,11 @@ def _iter_event_rows(db: Session, since):
         .all()
     )
     for row in rows:
-        action = (row.action or "").lower()
-        category = "login" if "login" in action else "security"
-        severity = "high" if row.success is False else None
+        event_type = _map_event_action(row.action, row.success)
+        if not event_type:
+            continue
+        category = get_category(event_type).value
+        severity = get_severity(event_type).value
         yield {
             "tenant_id": row.tenant_id,
             "website_id": None,
@@ -198,50 +315,6 @@ def _iter_event_rows(db: Session, since):
             "event_time": row.timestamp,
             "event_category": category,
             "severity": severity,
-            "country_code": row.country_code,
-            "region": row.region,
-            "city": row.city,
-            "latitude": row.latitude,
-            "longitude": row.longitude,
-            "asn_number": row.asn_number,
-            "asn_org": row.asn_org,
-            "is_datacenter": row.is_datacenter,
-        }
-
-
-def _iter_audit_rows(db: Session, since):
-    rows = (
-        db.query(
-            AuditLog.tenant_id,
-            AuditLog.timestamp,
-            IPEnrichment.country_code,
-            IPEnrichment.region,
-            IPEnrichment.city,
-            IPEnrichment.latitude,
-            IPEnrichment.longitude,
-            IPEnrichment.asn_number,
-            IPEnrichment.asn_org,
-            IPEnrichment.is_datacenter,
-        )
-        .join(
-            IPEnrichment,
-            and_(AuditLog.tenant_id == IPEnrichment.tenant_id, AuditLog.ip_hash == IPEnrichment.ip_hash),
-        )
-        .filter(
-            AuditLog.timestamp >= since,
-            AuditLog.ip_hash.isnot(None),
-            IPEnrichment.lookup_status == "ok",
-        )
-        .all()
-    )
-    for row in rows:
-        yield {
-            "tenant_id": row.tenant_id,
-            "website_id": None,
-            "environment_id": None,
-            "event_time": row.timestamp,
-            "event_category": "audit",
-            "severity": None,
             "country_code": row.country_code,
             "region": row.region,
             "city": row.city,
@@ -292,13 +365,13 @@ def run_geo_aggregate(
         )
         aggregates[key] = aggregates.get(key, 0) + 1
 
+    for row in _iter_security_event_rows(db, since):
+        add_row(row)
     for row in _iter_behaviour_rows(db, since):
         add_row(row)
     for row in _iter_alert_rows(db, since):
         add_row(row)
     for row in _iter_event_rows(db, since):
-        add_row(row)
-    for row in _iter_audit_rows(db, since):
         add_row(row)
 
     updated = 0

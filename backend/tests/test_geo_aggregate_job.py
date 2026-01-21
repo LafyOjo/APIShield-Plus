@@ -1,5 +1,4 @@
 import os
-from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import create_engine
@@ -16,9 +15,10 @@ from app.crud.tenants import create_tenant
 from app.crud.website_environments import list_environments
 from app.crud.websites import create_website
 from app.jobs import geo_aggregate as geo_job
-from app.models.behaviour_events import BehaviourEvent
 from app.models.geo_event_aggs import GeoEventAgg
 from app.models.ip_enrichments import IPEnrichment
+from app.models.security_events import SecurityEvent
+from app.security.taxonomy import SecurityEventTypeEnum, get_category, get_severity
 
 
 def _setup_db(db_url: str):
@@ -34,18 +34,26 @@ def _setup_db(db_url: str):
     return SessionLocal
 
 
-def _seed_event(db, *, tenant_id: int, website_id: int, env_id: int, ip_hash: str):
-    event = BehaviourEvent(
+def _seed_event(
+    db,
+    *,
+    tenant_id: int,
+    website_id: int,
+    env_id: int,
+    ip_hash: str,
+    event_type: SecurityEventTypeEnum = SecurityEventTypeEnum.LOGIN_ATTEMPT_FAILED,
+):
+    event = SecurityEvent(
         tenant_id=tenant_id,
         website_id=website_id,
         environment_id=env_id,
-        ingested_at=utcnow(),
-        event_ts=datetime.now(timezone.utc),
-        event_id=str(uuid4()),
-        event_type="page_view",
-        url="https://example.com/",
-        path="/",
+        event_ts=utcnow(),
+        event_type=event_type.value,
+        category=get_category(event_type).value,
+        severity=get_severity(event_type).value,
+        source="server",
         ip_hash=ip_hash,
+        request_path="/login",
     )
     db.add(event)
 
@@ -96,7 +104,7 @@ def test_geo_aggregate_creates_bucketed_counts(monkeypatch):
         agg = db.query(GeoEventAgg).filter(GeoEventAgg.tenant_id == tenant.id).first()
         assert agg is not None
         assert agg.count == 1
-        assert agg.event_category == "behaviour"
+        assert agg.event_category == "login"
         assert agg.country_code == "US"
 
 
@@ -158,3 +166,44 @@ def test_geo_aggregate_country_only_mode_for_free_plan(monkeypatch):
         assert agg.city is None
         assert agg.latitude is None
         assert agg.asn_number is None
+
+
+def test_geo_aggregate_includes_security_event_categories(monkeypatch):
+    db_url = f"sqlite:///./geo_agg_security_categories_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+
+    monkeypatch.setattr(
+        geo_job,
+        "resolve_effective_entitlements",
+        lambda db, tenant_id: {"features": {"geo_map": True}, "limits": {}},
+    )
+
+    with SessionLocal() as db:
+        tenant = create_tenant(db, name="Tenant A")
+        website = create_website(db, tenant.id, "example.com")
+        env = list_environments(db, website.id)[0]
+        ip_hash = hash_ip(tenant.id, "203.0.113.14")
+        _seed_enrichment(db, tenant_id=tenant.id, ip_hash=ip_hash)
+        for event_type in (
+            SecurityEventTypeEnum.LOGIN_ATTEMPT_FAILED,
+            SecurityEventTypeEnum.SQL_INJECTION_ATTEMPT,
+            SecurityEventTypeEnum.CSP_VIOLATION,
+            SecurityEventTypeEnum.BOT_SURGE,
+        ):
+            _seed_event(
+                db,
+                tenant_id=tenant.id,
+                website_id=website.id,
+                env_id=env.id,
+                ip_hash=ip_hash,
+                event_type=event_type,
+            )
+        db.commit()
+
+        updated = geo_job.run_geo_aggregate(db, lookback_minutes=60, max_buckets=10)
+        assert updated == 4
+        categories = {
+            row.event_category
+            for row in db.query(GeoEventAgg).filter(GeoEventAgg.tenant_id == tenant.id).all()
+        }
+        assert {"login", "threat", "integrity", "bot"}.issubset(categories)

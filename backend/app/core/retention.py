@@ -9,6 +9,7 @@ ALLOWED_RETENTION_EVENT_TYPES = {
     "event",
     "behaviour_event",
     "integrity_anomaly",
+    "security_event",
 }
 
 DEFAULT_RETENTION_DAYS = {
@@ -16,6 +17,7 @@ DEFAULT_RETENTION_DAYS = {
     "alert": 30,
     "event": 30,
     "behaviour_event": 7,
+    "security_event": 30,
 }
 
 

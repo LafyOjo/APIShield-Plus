@@ -6,7 +6,7 @@
 # It’s intentionally lightweight so demos can illustrate the concepts
 # without dragging in heavyweight, external dependencies.
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Depends, Query, status
 import hashlib
@@ -23,6 +23,7 @@ from app.models.alerts import Alert
 from app.models.audit_logs import AuditLog
 from app.models.enums import RoleEnum
 from app.models.events import Event
+from app.models.security_events import SecurityEvent
 from app.schemas.security import (
     SecurityIpBreakdown,
     SecurityIpSummary,
@@ -30,6 +31,8 @@ from app.schemas.security import (
     SecurityLocationSummary,
     SecurityLocationSummaryResponse,
 )
+from app.schemas.security_events import SecurityEventListItem, SecurityEventListResponse
+from app.security.taxonomy import SecurityCategoryEnum, SeverityEnum
 from app.tenancy.dependencies import require_role_in_tenant
 from sqlalchemy import func
 
@@ -118,6 +121,8 @@ init_chain()
 # admin-only authorization requirements.
 router = APIRouter(prefix="/security", tags=["security"])
 
+GRANULARITY_LEVELS = {"country": 0, "city": 1, "asn": 2}
+
 
 def _resolve_tenant_id(db, tenant_hint: str) -> int:
     if not tenant_hint:
@@ -151,11 +156,21 @@ def _coerce_positive_int(value) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _normalize_ts(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def _clamp_time_window(
     from_ts: datetime | None,
     to_ts: datetime | None,
     max_days: int | None,
 ) -> tuple[datetime | None, datetime | None]:
+    from_ts = _normalize_ts(from_ts)
+    to_ts = _normalize_ts(to_ts)
     if max_days is None:
         return from_ts, to_ts
     now = datetime.utcnow()
@@ -165,6 +180,48 @@ def _clamp_time_window(
     if effective_to < max_range_start:
         effective_to = now
     return effective_from, effective_to
+
+
+def _normalize_category(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip().lower()
+    try:
+        return SecurityCategoryEnum(normalized).value
+    except ValueError:
+        return None
+
+
+def _normalize_severity(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip().lower()
+    try:
+        return SeverityEnum(normalized).value
+    except ValueError:
+        return None
+
+
+def _mask_ip_hash(value: str | None) -> str | None:
+    if not value:
+        return None
+    if len(value) <= 12:
+        return value
+    return f"{value[:6]}...{value[-4:]}"
+
+
+def _apply_granularity(payload: dict, granularity_rank: int) -> dict:
+    data = dict(payload)
+    if granularity_rank < GRANULARITY_LEVELS["asn"]:
+        data["asn_number"] = None
+        data["asn_org"] = None
+        data["is_datacenter"] = None
+    if granularity_rank < GRANULARITY_LEVELS["city"]:
+        data["region"] = None
+        data["city"] = None
+        data["latitude"] = None
+        data["longitude"] = None
+    return data
 
 
 def _query_ip_stats(db, model, tenant_id: int, from_ts: datetime | None, to_ts: datetime | None):
@@ -411,6 +468,102 @@ def list_security_locations(
     end = start + page_size
     return SecurityLocationSummaryResponse(
         items=items[start:end],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/events", response_model=SecurityEventListResponse)
+def list_security_events(
+    from_ts: datetime | None = Query(None, alias="from"),
+    to_ts: datetime | None = Query(None, alias="to"),
+    category: str | None = None,
+    severity: str | None = None,
+    website_id: int | None = None,
+    env_id: int | None = None,
+    ip_hash: str | None = None,
+    country_code: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db=Depends(get_db),
+    ctx=Depends(require_role_in_tenant([RoleEnum.VIEWER], user_resolver=get_current_user)),
+):
+    tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
+    entitlements = resolve_effective_entitlements(db, tenant_id)
+    features = entitlements.get("features", {})
+    limits = entitlements.get("limits", {})
+    geo_enabled = bool(features.get("geo_map"))
+    max_geo_days = _coerce_positive_int(limits.get("geo_history_days"))
+    if not geo_enabled:
+        max_geo_days = 1
+    from_ts, to_ts = _clamp_time_window(from_ts, to_ts, max_geo_days)
+
+    normalized_category = _normalize_category(category)
+    normalized_severity = _normalize_severity(severity)
+    event_time_expr = func.coalesce(SecurityEvent.event_ts, SecurityEvent.created_at)
+
+    query = db.query(SecurityEvent).filter(SecurityEvent.tenant_id == tenant_id)
+    if normalized_category:
+        query = query.filter(SecurityEvent.category == normalized_category)
+    if normalized_severity:
+        query = query.filter(SecurityEvent.severity == normalized_severity)
+    if website_id:
+        query = query.filter(SecurityEvent.website_id == website_id)
+    if env_id:
+        query = query.filter(SecurityEvent.environment_id == env_id)
+    if ip_hash:
+        query = query.filter(SecurityEvent.ip_hash == ip_hash)
+    if country_code:
+        query = query.filter(SecurityEvent.country_code == country_code.upper())
+    if from_ts:
+        query = query.filter(event_time_expr >= from_ts)
+    if to_ts:
+        query = query.filter(event_time_expr <= to_ts)
+
+    total = query.count()
+    rows = (
+        query.order_by(event_time_expr.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    granularity_value = str(limits.get("geo_granularity") or "").lower()
+    granularity_rank = GRANULARITY_LEVELS.get(granularity_value, GRANULARITY_LEVELS["city"])
+    if not geo_enabled:
+        granularity_rank = GRANULARITY_LEVELS["country"]
+
+    items: list[SecurityEventListItem] = []
+    for row in rows:
+        payload = _apply_granularity(
+            {
+                "id": row.id,
+                "event_ts": row.event_ts,
+                "created_at": row.created_at,
+                "event_type": row.event_type,
+                "category": row.category,
+                "severity": row.severity,
+                "request_path": row.request_path,
+                "status_code": row.status_code,
+                "ip_hash": _mask_ip_hash(row.ip_hash),
+                "website_id": row.website_id,
+                "environment_id": row.environment_id,
+                "country_code": row.country_code,
+                "region": row.region,
+                "city": row.city,
+                "latitude": row.latitude,
+                "longitude": row.longitude,
+                "asn_number": row.asn_number,
+                "asn_org": row.asn_org,
+                "is_datacenter": row.is_datacenter,
+            },
+            granularity_rank,
+        )
+        items.append(SecurityEventListItem(**payload))
+
+    return SecurityEventListResponse(
+        items=items,
         total=total,
         page=page,
         page_size=page_size,

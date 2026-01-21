@@ -100,6 +100,8 @@ def _add_geo_agg(
     lat: float | None,
     lon: float | None,
     count: int,
+    category: str = "login",
+    severity: str | None = None,
 ):
     if bucket_start.tzinfo is not None:
         bucket_start = bucket_start.astimezone(timezone.utc).replace(tzinfo=None)
@@ -109,8 +111,8 @@ def _add_geo_agg(
             website_id=website_id,
             environment_id=env_id,
             bucket_start=bucket_start,
-            event_category="behaviour",
-            severity=None,
+            event_category=category,
+            severity=severity,
             country_code=country_code,
             region="CO",
             city=city,
@@ -233,6 +235,74 @@ def test_map_summary_clamps_time_range_by_entitlement():
     assert "FR" not in codes
 
 
+def test_map_summary_filters_by_category_login_threat_integrity():
+    db_url = f"sqlite:///./map_summary_filters_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+    tenant_slug, tenant_id, _user_id, website_id, env_id = _seed_tenant(
+        SessionLocal,
+        username="frank",
+        tenant_name="LexCorp",
+        domain="example.com",
+    )
+    with SessionLocal() as db:
+        _set_plan(db, tenant_id=tenant_id, name="GeoProE", geo_map=True, geo_days=7)
+        now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        _add_geo_agg(
+            db,
+            tenant_id=tenant_id,
+            website_id=website_id,
+            env_id=env_id,
+            bucket_start=now,
+            country_code="US",
+            city="Denver",
+            lat=39.7,
+            lon=-104.9,
+            count=5,
+            category="login",
+        )
+        _add_geo_agg(
+            db,
+            tenant_id=tenant_id,
+            website_id=website_id,
+            env_id=env_id,
+            bucket_start=now,
+            country_code="US",
+            city="Denver",
+            lat=39.7,
+            lon=-104.9,
+            count=3,
+            category="threat",
+        )
+        _add_geo_agg(
+            db,
+            tenant_id=tenant_id,
+            website_id=website_id,
+            env_id=env_id,
+            bucket_start=now,
+            country_code="US",
+            city="Denver",
+            lat=39.7,
+            lon=-104.9,
+            count=2,
+            category="integrity",
+        )
+        db.commit()
+
+    token = _login("frank", tenant_slug)
+    headers = {"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_slug}
+    for category, expected in (("login", 5), ("threat", 3), ("integrity", 2)):
+        resp = client.get(
+            "/api/v1/map/summary",
+            params={"category": category},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["items"]
+        total = sum(item["count"] for item in payload["items"])
+        assert total == expected
+
+
 def test_map_drilldown_does_not_return_raw_ip():
     db_url = f"sqlite:///./map_drilldown_ip_{uuid4().hex}.db"
     SessionLocal = _setup_db(db_url)
@@ -288,6 +358,7 @@ def test_map_drilldown_does_not_return_raw_ip():
             lat=40.0,
             lon=-105.0,
             count=1,
+            category="threat",
         )
         db.commit()
 

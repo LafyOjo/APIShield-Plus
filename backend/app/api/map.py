@@ -13,12 +13,12 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.core.entitlements import resolve_effective_entitlements
 from app.models.alerts import Alert
-from app.models.audit_logs import AuditLog
-from app.models.behaviour_events import BehaviourEvent
 from app.models.events import Event
 from app.models.geo_event_aggs import GeoEventAgg
 from app.models.ip_enrichments import IPEnrichment
+from app.models.security_events import SecurityEvent
 from app.models.enums import RoleEnum
+from app.security.taxonomy import SecurityCategoryEnum
 from app.schemas.map import (
     MapDrilldownASN,
     MapDrilldownCity,
@@ -38,6 +38,13 @@ router = APIRouter(prefix="/map", tags=["map"])
 _SUMMARY_CACHE: dict[tuple, tuple[float, list[MapSummaryPoint]]] = {}
 _SUMMARY_CACHE_TTL_SECONDS = 60
 
+LEGACY_CATEGORY_MAP = {
+    "behaviour": None,
+    "error": SecurityCategoryEnum.INTEGRITY.value,
+    "audit": SecurityCategoryEnum.INTEGRITY.value,
+    "security": SecurityCategoryEnum.THREAT.value,
+}
+
 
 def _coerce_positive_int(value) -> int | None:
     if value is None or isinstance(value, bool):
@@ -47,6 +54,18 @@ def _coerce_positive_int(value) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _normalize_category(category: str | None) -> str | None:
+    if not category:
+        return None
+    normalized = category.strip().lower()
+    if normalized in LEGACY_CATEGORY_MAP:
+        return LEGACY_CATEGORY_MAP[normalized]
+    try:
+        return SecurityCategoryEnum(normalized).value
+    except ValueError:
+        return None
 
 
 def _normalize_ts(value: datetime | None) -> datetime | None:
@@ -147,18 +166,6 @@ def _apply_enrichment_location_filter(query, *, country_code, lat, lon, radius_k
     return query
 
 
-def _select_model_for_category(category: str | None):
-    if category in {None, "behaviour", "error"}:
-        return BehaviourEvent, BehaviourEvent.ingested_at
-    if category == "threat":
-        return Alert, Alert.timestamp
-    if category in {"login", "security"}:
-        return Event, Event.timestamp
-    if category == "audit":
-        return AuditLog, AuditLog.timestamp
-    return BehaviourEvent, BehaviourEvent.ingested_at
-
-
 def _query_ip_hashes(
     db: Session,
     *,
@@ -175,47 +182,72 @@ def _query_ip_hashes(
     radius_km: float | None,
     limit: int = 20,
 ) -> list[MapDrilldownIpHash]:
-    model, time_col = _select_model_for_category(category)
+    normalized_category = _normalize_category(category)
+    sources: list[tuple[object, object, list]] = []
 
-    if (website_id or env_id) and not hasattr(model, "website_id"):
-        return []
-
-    query = (
-        db.query(model.ip_hash.label("ip_hash"), func.count().label("count"))
-        .join(
-            IPEnrichment,
-            and_(model.tenant_id == IPEnrichment.tenant_id, model.ip_hash == IPEnrichment.ip_hash),
+    if normalized_category == SecurityCategoryEnum.LOGIN.value:
+        sources.append((Event, Event.timestamp, [Event.action.ilike("%login%")]))
+    elif normalized_category == SecurityCategoryEnum.THREAT.value:
+        sources.append((Alert, Alert.timestamp, []))
+        sources.append((Event, Event.timestamp, [Event.action.ilike("%stuffing%")]))
+    elif normalized_category in {
+        SecurityCategoryEnum.INTEGRITY.value,
+        SecurityCategoryEnum.BOT.value,
+        SecurityCategoryEnum.ANOMALY.value,
+    }:
+        time_col = func.coalesce(SecurityEvent.event_ts, SecurityEvent.created_at)
+        sources.append(
+            (
+                SecurityEvent,
+                time_col,
+                [SecurityEvent.category == normalized_category],
+            )
         )
-        .filter(
-            model.tenant_id == tenant_id,
-            model.ip_hash.isnot(None),
-            IPEnrichment.lookup_status == "ok",
-        )
-    )
+    else:
+        sources.append((Event, Event.timestamp, []))
+        sources.append((Alert, Alert.timestamp, []))
 
-    if hasattr(model, "website_id") and website_id:
-        query = query.filter(model.website_id == website_id)
-    if hasattr(model, "environment_id") and env_id:
-        query = query.filter(model.environment_id == env_id)
-    if category == "error" and model is BehaviourEvent:
-        query = query.filter(BehaviourEvent.event_type == "error")
-    query = _apply_time_filters(query, time_col, from_ts, to_ts)
-    if bucket_start:
-        query = query.filter(time_col >= bucket_start, time_col < bucket_start + timedelta(hours=1))
-    query = _apply_enrichment_location_filter(
-        query,
-        country_code=country_code,
-        lat=lat,
-        lon=lon,
-        radius_km=radius_km,
-    )
-    rows = (
-        query.group_by(model.ip_hash)
-        .order_by(func.count().desc())
-        .limit(limit)
-        .all()
-    )
-    return [MapDrilldownIpHash(ip_hash=row.ip_hash, count=int(row.count or 0)) for row in rows]
+    ip_counts: dict[str, int] = {}
+
+    for model, time_col, extra_filters in sources:
+        if (website_id or env_id) and not hasattr(model, "website_id"):
+            continue
+        query = (
+            db.query(model.ip_hash.label("ip_hash"), func.count().label("count"))
+            .join(
+                IPEnrichment,
+                and_(model.tenant_id == IPEnrichment.tenant_id, model.ip_hash == IPEnrichment.ip_hash),
+            )
+            .filter(
+                model.tenant_id == tenant_id,
+                model.ip_hash.isnot(None),
+                IPEnrichment.lookup_status == "ok",
+            )
+        )
+        if hasattr(model, "website_id") and website_id:
+            query = query.filter(model.website_id == website_id)
+        if hasattr(model, "environment_id") and env_id:
+            query = query.filter(model.environment_id == env_id)
+        if extra_filters:
+            query = query.filter(*extra_filters)
+        query = _apply_time_filters(query, time_col, from_ts, to_ts)
+        if bucket_start:
+            query = query.filter(time_col >= bucket_start, time_col < bucket_start + timedelta(hours=1))
+        query = _apply_enrichment_location_filter(
+            query,
+            country_code=country_code,
+            lat=lat,
+            lon=lon,
+            radius_km=radius_km,
+        )
+        rows = query.group_by(model.ip_hash).order_by(func.count().desc()).limit(limit).all()
+        for row in rows:
+            if not row.ip_hash:
+                continue
+            ip_counts[row.ip_hash] = ip_counts.get(row.ip_hash, 0) + int(row.count or 0)
+
+    sorted_rows = sorted(ip_counts.items(), key=lambda item: item[1], reverse=True)[:limit]
+    return [MapDrilldownIpHash(ip_hash=ip_hash, count=count) for ip_hash, count in sorted_rows]
 
 
 def _query_top_paths(
@@ -234,7 +266,8 @@ def _query_top_paths(
     radius_km: float | None,
     limit: int = 10,
 ) -> list[MapDrilldownPath]:
-    if category not in {None, "threat"}:
+    normalized_category = _normalize_category(category)
+    if normalized_category not in {None, SecurityCategoryEnum.THREAT.value}:
         return []
     if website_id or env_id:
         return []
@@ -285,6 +318,7 @@ def map_summary(
     ctx=Depends(require_role_in_tenant([RoleEnum.VIEWER], user_resolver=get_current_user)),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
+    category = _normalize_category(category)
     entitlements = resolve_effective_entitlements(db, tenant_id)
     features = entitlements.get("features", {})
     limits = entitlements.get("limits", {})
@@ -399,6 +433,7 @@ def map_drilldown(
     ctx=Depends(require_role_in_tenant([RoleEnum.VIEWER], user_resolver=get_current_user)),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
+    category = _normalize_category(category)
     entitlements = resolve_effective_entitlements(db, tenant_id)
     features = entitlements.get("features", {})
     limits = entitlements.get("limits", {})

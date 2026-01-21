@@ -7,11 +7,11 @@ import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 
 const CATEGORY_COLORS = {
-  behaviour: "#3b82f6",
   login: "#10b981",
   threat: "#ef4444",
-  error: "#f97316",
-  audit: "#8b5cf6",
+  integrity: "#f97316",
+  bot: "#0ea5e9",
+  anomaly: "#8b5cf6",
   default: "#64748b",
 };
 
@@ -153,7 +153,7 @@ export default function GeoMapView({
           ))}
         </div>
         <div className="map-legend-note">
-          Category: {category || "behaviour"}
+          Category: {category || "all"}
         </div>
       </div>
 

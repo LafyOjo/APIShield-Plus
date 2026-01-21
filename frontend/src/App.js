@@ -19,6 +19,9 @@ import AttackSim from "./AttackSim";
 import UserAccounts from "./UserAccounts";
 import LoginStatus from "./LoginStatus";
 import SecurityMapPage from "./SecurityMapPage";
+import SecurityEventsPage from "./SecurityEventsPage";
+import RevenueIntegrityIncidentsPage from "./RevenueIntegrityIncidentsPage";
+import RevenueIntegrityIncidentDetailPage from "./RevenueIntegrityIncidentDetailPage";
 import "./App.css";
 
 /*
@@ -131,6 +134,16 @@ function App() {
     currentRoute.startsWith("/dashboard/security/map") ||
     currentRoute.startsWith("/map") ||
     currentRoute.startsWith("/dashboard/map");
+  const isEventsRoute =
+    currentRoute.startsWith("/dashboard/security/events") ||
+    currentRoute.startsWith("/security/events");
+  const revenuePrefix = "/dashboard/revenue-integrity/incidents";
+  const incidentDetailMatch = currentRoute.match(
+    /^\/dashboard\/revenue-integrity\/incidents\/(\d+)/
+  );
+  const isRevenueRoute = currentRoute.startsWith(revenuePrefix);
+  const isIncidentDetailRoute = Boolean(incidentDetailMatch);
+  const incidentId = incidentDetailMatch ? incidentDetailMatch[1] : null;
 
   /*
   # If no token: show login screen instead of the dashboard.
@@ -170,7 +183,9 @@ function App() {
         <h1 className="dashboard-header">APIShield+ Dashboard</h1>
         <div className="row">
           <button
-            className={`btn secondary nav-tab ${!isMapRoute ? "active" : ""}`}
+            className={`btn secondary nav-tab ${
+              !isMapRoute && !isEventsRoute ? "active" : ""
+            }`}
             onClick={() => navigate("/")}
           >
             Overview
@@ -181,6 +196,18 @@ function App() {
           >
             Security Map
           </button>
+          <button
+            className={`btn secondary nav-tab ${isEventsRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/security/events")}
+          >
+            Security Events
+          </button>
+          <button
+            className={`btn secondary nav-tab ${isRevenueRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/revenue-integrity/incidents")}
+          >
+            Revenue Integrity
+          </button>
           <button className="btn secondary" onClick={toggleTheme}>
             {isDark ? "Light mode" : "Dark mode"}
           </button>
@@ -190,8 +217,14 @@ function App() {
         </div>
       </header>
 
-      {isMapRoute ? (
+      {isIncidentDetailRoute ? (
+        <RevenueIntegrityIncidentDetailPage incidentId={incidentId} />
+      ) : isRevenueRoute ? (
+        <RevenueIntegrityIncidentsPage />
+      ) : isMapRoute ? (
         <SecurityMapPage />
+      ) : isEventsRoute ? (
+        <SecurityEventsPage />
       ) : (
         <>
           <section className="card">

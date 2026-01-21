@@ -98,6 +98,12 @@ from .external_integrations import (
     update_integration,
     get_integration,
 )
+from .notification_rules import (
+    create_rule,
+    list_rules,
+    get_rule,
+    update_rule,
+)
 from .user_profiles import (
     get_or_create_profile,
     update_profile,
@@ -188,6 +194,10 @@ __all__ = [
     "list_integrations",
     "update_integration",
     "get_integration",
+    "create_rule",
+    "list_rules",
+    "get_rule",
+    "update_rule",
     "get_or_create_profile",
     "update_profile",
 ]
