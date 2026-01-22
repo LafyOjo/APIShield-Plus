@@ -3,6 +3,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.entitlements import resolve_effective_entitlements
+from app.entitlements.enforcement import assert_limit, require_feature
 from app.models.notification_channels import NotificationChannel
 from app.models.notification_rules import NotificationRule, NotificationRuleChannel
 from app.security.taxonomy import SecurityCategoryEnum, SeverityEnum
@@ -142,28 +143,26 @@ def _validate_advanced_triggers(
     thresholds: dict[str, Any],
     entitlements: dict[str, Any],
 ) -> None:
-    features = entitlements.get("features", {}) if entitlements else {}
-    advanced_enabled = bool(features.get("advanced_alerting"))
     requires_advanced = trigger_type in ADVANCED_TRIGGER_TYPES or bool(
         thresholds.get("lost_revenue_min")
     )
-    if requires_advanced and not advanced_enabled:
-        raise ValueError("Advanced alerting is required for this trigger")
-
-
-def _coerce_limit(entitlements: dict[str, Any]) -> int | None:
-    limits = entitlements.get("limits", {}) if entitlements else {}
-    limit_value = limits.get("notification_rules")
-    return _coerce_positive_int(limit_value)
+    if requires_advanced:
+        require_feature(
+            entitlements,
+            "advanced_alerting",
+            message="Advanced alerting is required for this trigger",
+        )
 
 
 def _enforce_rule_limit(db: Session, tenant_id: int, entitlements: dict[str, Any]) -> None:
-    limit_value = _coerce_limit(entitlements)
-    if limit_value is None:
-        return
     current = db.query(NotificationRule).filter(NotificationRule.tenant_id == tenant_id).count()
-    if current >= limit_value:
-        raise ValueError("Notification rule limit reached for plan")
+    assert_limit(
+        entitlements,
+        "notification_rules",
+        current,
+        mode="hard",
+        message="Notification rule limit reached for plan",
+    )
 
 
 def _validate_channel_ids(
@@ -329,4 +328,3 @@ def update_rule(
     db.commit()
     db.refresh(rule)
     return rule
-

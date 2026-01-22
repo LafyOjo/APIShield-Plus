@@ -151,6 +151,14 @@ class Settings(BaseSettings):
     INCIDENT_RESOLVE_COOLDOWN_HOURS: int = 6
     INCIDENT_RESOLVE_CONVERSION_TOLERANCE: float = 0.05
 
+    # Stripe billing configuration.
+    STRIPE_SECRET_KEY: Optional[str] = None
+    STRIPE_WEBHOOK_SECRET: Optional[str] = None
+    STRIPE_PRICE_ID_PRO: Optional[str] = None
+    STRIPE_PRICE_ID_BUSINESS: Optional[str] = None
+    STRIPE_PRICE_ID_ENTERPRISE: Optional[str] = None
+    APP_BASE_URL: Optional[str] = None
+
 
 # Instantiate a single settings object for app-wide import.
 # Any module can just `from app.core.config import settings`.

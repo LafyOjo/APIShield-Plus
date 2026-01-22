@@ -28,11 +28,11 @@ def create_website(
     display_name: str | None = None,
     created_by_user_id: int | None = None,
 ) -> Website:
-    assert_can_create_website(tenant_id)
     normalized = normalize_domain(domain)
     existing = scoped_query(db, Website, tenant_id).filter(Website.domain == normalized).first()
     if existing:
         raise ValueError("Website already exists for tenant.")
+    assert_can_create_website(db, tenant_id)
     website = Website(
         tenant_id=tenant_id,
         domain=normalized,

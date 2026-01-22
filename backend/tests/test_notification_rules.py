@@ -13,6 +13,7 @@ os.environ["SKIP_MIGRATIONS"] = "1"
 from app.core.db import Base
 from app.crud.notification_channels import create_channel
 from app.crud.notification_rules import create_rule
+from app.entitlements.enforcement import PlanLimitExceeded
 from app.crud.subscriptions import set_tenant_plan
 from app.crud.tenants import create_tenant
 from app.models.plans import Plan
@@ -104,7 +105,7 @@ def test_notification_rule_limit_enforced_by_entitlement():
             name="Incident created",
             trigger_type="incident_created",
         )
-        with pytest.raises(ValueError):
+        with pytest.raises(PlanLimitExceeded):
             create_rule(
                 db,
                 tenant_id=tenant.id,

@@ -55,6 +55,47 @@ REQUEST_COUNT = Counter(
     ["method", "endpoint", "http_status"],
 )
 
+REQUEST_DURATION_MS = Histogram(
+    "request_duration_ms",
+    "API request duration in milliseconds",
+    ["method", "route"],
+    buckets=[5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000],
+)
+REQUESTS_TOTAL = Counter(
+    "requests_total",
+    "Total API requests",
+    ["method", "route", "status_code"],
+)
+
+INGEST_EVENTS_TOTAL = Counter(
+    "ingest_events_total",
+    "Total ingested events",
+    ["tenant_id", "website_id", "environment_id", "event_type", "ingest_type"],
+)
+INGEST_LATENCY_MS = Histogram(
+    "ingest_latency_ms",
+    "Ingest request latency in milliseconds",
+    ["ingest_type"],
+    buckets=[5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000],
+)
+
+NOTIFICATIONS_SENT_TOTAL = Counter(
+    "notifications_sent_total",
+    "Notifications sent successfully",
+    ["channel_type", "trigger_type"],
+)
+NOTIFICATIONS_FAILED_TOTAL = Counter(
+    "notifications_failed_total",
+    "Notifications that failed to send",
+    ["channel_type", "trigger_type"],
+)
+
+JOB_RUN_TOTAL = Counter(
+    "job_run_total",
+    "Background job runs",
+    ["job_name", "status"],
+)
+
 # Per-user API call totals. Prometheus gives us timeseries, and
 # the dict below serves the /api/user-calls endpoint for the UI.
 USER_REQUEST_COUNT = Counter(
@@ -114,10 +155,15 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         start = monotonic()
         response = await call_next(request)
         duration = monotonic() - start
+        duration_ms = duration * 1000.0
 
         # Record latency and increment the labeled request counter.
-        REQUEST_LATENCY.labels(request.method, request.url.path).observe(duration)
-        REQUEST_COUNT.labels(request.method, request.url.path, response.status_code).inc()
+        route = request.scope.get("route")
+        route_path = getattr(route, "path", None) or request.url.path
+        REQUEST_LATENCY.labels(request.method, route_path).observe(duration)
+        REQUEST_COUNT.labels(request.method, route_path, response.status_code).inc()
+        REQUEST_DURATION_MS.labels(request.method, route_path).observe(duration_ms)
+        REQUESTS_TOTAL.labels(request.method, route_path, str(response.status_code)).inc()
 
         # Best-effort attribution: decode JWT if present to tag the user.
         # If anything fails, we fall back to "unknown" to keep metrics flowing.
@@ -135,3 +181,55 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         increment_user(user)
 
         return response
+
+
+def _label(value: object | None, default: str = "unknown") -> str:
+    if value is None:
+        return default
+    if isinstance(value, str) and not value.strip():
+        return default
+    return str(value)
+
+
+def record_ingest_event(
+    *,
+    tenant_id: int | None,
+    website_id: int | None,
+    environment_id: int | None,
+    event_type: str | None,
+    ingest_type: str,
+) -> None:
+    INGEST_EVENTS_TOTAL.labels(
+        tenant_id=_label(tenant_id),
+        website_id=_label(website_id),
+        environment_id=_label(environment_id),
+        event_type=_label(event_type),
+        ingest_type=_label(ingest_type, "unknown"),
+    ).inc()
+
+
+def record_ingest_latency(*, ingest_type: str, duration_ms: float) -> None:
+    INGEST_LATENCY_MS.labels(ingest_type=_label(ingest_type, "unknown")).observe(duration_ms)
+
+
+def record_notification_delivery(
+    *,
+    channel_type: str | None,
+    trigger_type: str | None,
+    success: bool,
+) -> None:
+    labels = {
+        "channel_type": _label(channel_type),
+        "trigger_type": _label(trigger_type),
+    }
+    if success:
+        NOTIFICATIONS_SENT_TOTAL.labels(**labels).inc()
+    else:
+        NOTIFICATIONS_FAILED_TOTAL.labels(**labels).inc()
+
+
+def record_job_run(*, job_name: str, success: bool) -> None:
+    JOB_RUN_TOTAL.labels(
+        job_name=_label(job_name),
+        status="success" if success else "failure",
+    ).inc()

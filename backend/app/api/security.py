@@ -6,7 +6,7 @@
 # It’s intentionally lightweight so demos can illustrate the concepts
 # without dragging in heavyweight, external dependencies.
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Depends, Query, status
 import hashlib
@@ -17,7 +17,7 @@ from app.api.dependencies import require_role, get_current_user
 from app.core.db import get_db
 from app.core.privacy import mask_ip
 from app.core.entitlements import resolve_effective_entitlements
-from app.crud.tenant_settings import get_settings
+from app.entitlements.enforcement import clamp_range
 from app.crud.tenants import get_tenant_by_id, get_tenant_by_slug
 from app.models.alerts import Alert
 from app.models.audit_logs import AuditLog
@@ -154,32 +154,6 @@ def _coerce_positive_int(value) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
-
-
-def _normalize_ts(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
-
-
-def _clamp_time_window(
-    from_ts: datetime | None,
-    to_ts: datetime | None,
-    max_days: int | None,
-) -> tuple[datetime | None, datetime | None]:
-    from_ts = _normalize_ts(from_ts)
-    to_ts = _normalize_ts(to_ts)
-    if max_days is None:
-        return from_ts, to_ts
-    now = datetime.utcnow()
-    max_range_start = now - timedelta(days=max_days)
-    effective_to = to_ts if to_ts and to_ts <= now else now
-    effective_from = from_ts if from_ts and from_ts >= max_range_start else max_range_start
-    if effective_to < max_range_start:
-        effective_to = now
-    return effective_from, effective_to
 
 
 def _normalize_category(value: str | None) -> str | None:
@@ -328,7 +302,10 @@ def list_security_ips(
     max_geo_days = _coerce_positive_int(limits.get("geo_history_days"))
     if not geo_enabled:
         max_geo_days = 1
-    from_ts, to_ts = _clamp_time_window(from_ts, to_ts, max_geo_days)
+    clamp_limits = dict(limits)
+    clamp_limits["geo_history_days"] = max_geo_days
+    clamp_result = clamp_range({"limits": clamp_limits}, "geo_history_days", from_ts, to_ts)
+    from_ts, to_ts = clamp_result.from_ts, clamp_result.to_ts
     ip_stats = {}
 
     def _merge(rows, source: str):
@@ -356,7 +333,6 @@ def list_security_ips(
     _merge(_query_ip_stats(db, Alert, tenant_id, from_ts, to_ts), "alert")
     _merge(_query_ip_stats(db, AuditLog, tenant_id, from_ts, to_ts), "audit")
 
-    settings_row = get_settings(db, tenant_id)
     allow_raw_ip = (
         include_raw_ip
         and geo_enabled
@@ -365,11 +341,7 @@ def list_security_ips(
     )
     raw_ip_cutoff = None
     if allow_raw_ip:
-        limit_raw_days = _coerce_positive_int(limits.get("raw_ip_retention_days"))
-        settings_raw_days = _coerce_positive_int(settings_row.ip_raw_retention_days)
-        effective_raw_days = settings_raw_days
-        if limit_raw_days is not None and settings_raw_days is not None:
-            effective_raw_days = min(settings_raw_days, limit_raw_days)
+        effective_raw_days = _coerce_positive_int(limits.get("raw_ip_retention_days"))
         if effective_raw_days is None:
             allow_raw_ip = False
         else:
@@ -430,7 +402,10 @@ def list_security_locations(
     max_geo_days = _coerce_positive_int(limits.get("geo_history_days"))
     if not geo_enabled:
         max_geo_days = 1
-    from_ts, to_ts = _clamp_time_window(from_ts, to_ts, max_geo_days)
+    clamp_limits = dict(limits)
+    clamp_limits["geo_history_days"] = max_geo_days
+    clamp_result = clamp_range({"limits": clamp_limits}, "geo_history_days", from_ts, to_ts)
+    from_ts, to_ts = clamp_result.from_ts, clamp_result.to_ts
     location_stats = {}
 
     def _merge(rows):
@@ -497,7 +472,10 @@ def list_security_events(
     max_geo_days = _coerce_positive_int(limits.get("geo_history_days"))
     if not geo_enabled:
         max_geo_days = 1
-    from_ts, to_ts = _clamp_time_window(from_ts, to_ts, max_geo_days)
+    clamp_limits = dict(limits)
+    clamp_limits["geo_history_days"] = max_geo_days
+    clamp_result = clamp_range({"limits": clamp_limits}, "geo_history_days", from_ts, to_ts)
+    from_ts, to_ts = clamp_result.from_ts, clamp_result.to_ts
 
     normalized_category = _normalize_category(category)
     normalized_severity = _normalize_severity(severity)

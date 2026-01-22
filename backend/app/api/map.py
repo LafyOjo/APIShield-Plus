@@ -12,6 +12,8 @@ from app.api.dependencies import get_current_user
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.entitlements import resolve_effective_entitlements
+from app.core.tracing import trace_span
+from app.entitlements.enforcement import clamp_range
 from app.models.alerts import Alert
 from app.models.events import Event
 from app.models.geo_event_aggs import GeoEventAgg
@@ -74,22 +76,6 @@ def _normalize_ts(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value
     return value.astimezone(timezone.utc).replace(tzinfo=None)
-
-
-def _clamp_time_window(
-    from_ts: datetime | None,
-    to_ts: datetime | None,
-    max_days: int | None,
-) -> tuple[datetime | None, datetime | None]:
-    if max_days is None:
-        return _normalize_ts(from_ts), _normalize_ts(to_ts)
-    now = datetime.utcnow()
-    max_range_start = now - timedelta(days=max_days)
-    effective_to = _normalize_ts(to_ts) if to_ts and to_ts <= now else now
-    effective_from = _normalize_ts(from_ts) if from_ts and from_ts >= max_range_start else max_range_start
-    if effective_to < max_range_start:
-        effective_to = now
-    return effective_from, effective_to
 
 
 def _resolve_tenant_id(db: Session, tenant_hint: str) -> int:
@@ -326,94 +312,104 @@ def map_summary(
     max_geo_days = _coerce_positive_int(limits.get("geo_history_days"))
     if not geo_enabled:
         max_geo_days = 1
-    from_ts, to_ts = _clamp_time_window(from_ts, to_ts, max_geo_days)
+    clamp_limits = dict(limits)
+    clamp_limits["geo_history_days"] = max_geo_days
+    clamp_result = clamp_range({"limits": clamp_limits}, "geo_history_days", from_ts, to_ts)
+    from_ts, to_ts = clamp_result.from_ts, clamp_result.to_ts
 
-    cache_key = (
-        str(db.get_bind().url),
-        tenant_id,
-        from_ts,
-        to_ts,
-        website_id,
-        env_id,
-        category,
-        severity,
-        geo_enabled,
-    )
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return MapSummaryResponse(items=cached)
-
-    if geo_enabled:
-        query = db.query(
-            GeoEventAgg.latitude,
-            GeoEventAgg.longitude,
-            GeoEventAgg.country_code,
-            GeoEventAgg.region,
-            GeoEventAgg.city,
-            GeoEventAgg.asn_number,
-            GeoEventAgg.asn_org,
-            GeoEventAgg.is_datacenter,
-            func.sum(GeoEventAgg.count).label("count"),
+    with trace_span(
+        "map.summary",
+        tenant_id=tenant_id,
+        website_id=website_id,
+        environment_id=env_id,
+        category=category,
+    ):
+        cache_key = (
+            str(db.get_bind().url),
+            tenant_id,
+            from_ts,
+            to_ts,
+            website_id,
+            env_id,
+            category,
+            severity,
+            geo_enabled,
         )
-    else:
-        query = db.query(
-            GeoEventAgg.country_code,
-            func.sum(GeoEventAgg.count).label("count"),
-        )
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return MapSummaryResponse(items=cached)
 
-    query = query.filter(GeoEventAgg.tenant_id == tenant_id)
-    if website_id:
-        query = query.filter(GeoEventAgg.website_id == website_id)
-    if env_id:
-        query = query.filter(GeoEventAgg.environment_id == env_id)
-    if category:
-        query = query.filter(GeoEventAgg.event_category == category)
-    if severity:
-        query = query.filter(GeoEventAgg.severity == severity)
-    query = _apply_time_filters(query, GeoEventAgg.bucket_start, from_ts, to_ts)
-
-    if geo_enabled:
-        query = query.group_by(
-            GeoEventAgg.latitude,
-            GeoEventAgg.longitude,
-            GeoEventAgg.country_code,
-            GeoEventAgg.region,
-            GeoEventAgg.city,
-            GeoEventAgg.asn_number,
-            GeoEventAgg.asn_org,
-            GeoEventAgg.is_datacenter,
-        )
-    else:
-        query = query.group_by(GeoEventAgg.country_code)
-    rows = query.order_by(func.sum(GeoEventAgg.count).desc()).all()
-
-    items: list[MapSummaryPoint] = []
-    if geo_enabled:
-        for row in rows:
-            items.append(
-                MapSummaryPoint(
-                    count=int(row.count or 0),
-                    latitude=row.latitude,
-                    longitude=row.longitude,
-                    country_code=row.country_code,
-                    region=row.region,
-                    city=row.city,
-                    asn_number=row.asn_number,
-                    asn_org=row.asn_org,
-                    is_datacenter=row.is_datacenter,
-                )
+        if geo_enabled:
+            query = db.query(
+                GeoEventAgg.latitude,
+                GeoEventAgg.longitude,
+                GeoEventAgg.country_code,
+                GeoEventAgg.region,
+                GeoEventAgg.city,
+                GeoEventAgg.asn_number,
+                GeoEventAgg.asn_org,
+                GeoEventAgg.is_datacenter,
+                func.sum(GeoEventAgg.count).label("count"),
             )
-    else:
-        for row in rows:
-            items.append(
-                MapSummaryPoint(
-                    count=int(row.count or 0),
-                    country_code=row.country_code,
-                )
+        else:
+            query = db.query(
+                GeoEventAgg.country_code,
+                func.sum(GeoEventAgg.count).label("count"),
             )
 
-    _cache_set(cache_key, items)
-    return MapSummaryResponse(items=items)
+        query = query.filter(GeoEventAgg.tenant_id == tenant_id)
+        if website_id:
+            query = query.filter(GeoEventAgg.website_id == website_id)
+        if env_id:
+            query = query.filter(GeoEventAgg.environment_id == env_id)
+        if category:
+            query = query.filter(GeoEventAgg.event_category == category)
+        if severity:
+            query = query.filter(GeoEventAgg.severity == severity)
+        query = _apply_time_filters(query, GeoEventAgg.bucket_start, from_ts, to_ts)
+
+        if geo_enabled:
+            query = query.group_by(
+                GeoEventAgg.latitude,
+                GeoEventAgg.longitude,
+                GeoEventAgg.country_code,
+                GeoEventAgg.region,
+                GeoEventAgg.city,
+                GeoEventAgg.asn_number,
+                GeoEventAgg.asn_org,
+                GeoEventAgg.is_datacenter,
+            )
+        else:
+            query = query.group_by(GeoEventAgg.country_code)
+        rows = query.order_by(func.sum(GeoEventAgg.count).desc()).all()
+
+        items: list[MapSummaryPoint] = []
+        if geo_enabled:
+            for row in rows:
+                items.append(
+                    MapSummaryPoint(
+                        count=int(row.count or 0),
+                        latitude=row.latitude,
+                        longitude=row.longitude,
+                        country_code=row.country_code,
+                        region=row.region,
+                        city=row.city,
+                        asn_number=row.asn_number,
+                        asn_org=row.asn_org,
+                        is_datacenter=row.is_datacenter,
+                    )
+                )
+        else:
+            for row in rows:
+                items.append(
+                    MapSummaryPoint(
+                        count=int(row.count or 0),
+                        country_code=row.country_code,
+                    )
+                )
+
+        _cache_set(cache_key, items)
+        return MapSummaryResponse(items=items)
 
 
 @router.get("/drilldown", response_model=MapDrilldownResponse)
@@ -441,128 +437,138 @@ def map_drilldown(
     max_geo_days = _coerce_positive_int(limits.get("geo_history_days"))
     if not geo_enabled:
         max_geo_days = 1
-    from_ts, to_ts = _clamp_time_window(from_ts, to_ts, max_geo_days)
+    clamp_limits = dict(limits)
+    clamp_limits["geo_history_days"] = max_geo_days
+    clamp_result = clamp_range({"limits": clamp_limits}, "geo_history_days", from_ts, to_ts)
+    from_ts, to_ts = clamp_result.from_ts, clamp_result.to_ts
 
-    base_query = db.query(GeoEventAgg).filter(GeoEventAgg.tenant_id == tenant_id)
-    if website_id:
-        base_query = base_query.filter(GeoEventAgg.website_id == website_id)
-    if env_id:
-        base_query = base_query.filter(GeoEventAgg.environment_id == env_id)
-    if category:
-        base_query = base_query.filter(GeoEventAgg.event_category == category)
-    if severity:
-        base_query = base_query.filter(GeoEventAgg.severity == severity)
-    base_query = _apply_time_filters(base_query, GeoEventAgg.bucket_start, from_ts, to_ts)
-    if bucket_start:
-        bucket_start = _normalize_ts(bucket_start)
-        base_query = base_query.filter(GeoEventAgg.bucket_start == bucket_start)
-    base_query = _apply_location_filter(
-        base_query,
-        country_code=country_code,
-        lat=lat,
-        lon=lon,
-        radius_km=radius_km,
-    )
-
-    countries_rows = (
-        base_query.with_entities(
-            GeoEventAgg.country_code.label("country_code"),
-            func.sum(GeoEventAgg.count).label("count"),
-        )
-        .group_by(GeoEventAgg.country_code)
-        .order_by(func.sum(GeoEventAgg.count).desc())
-        .limit(20)
-        .all()
-    )
-    countries = [
-        MapDrilldownCountry(country_code=row.country_code, count=int(row.count or 0))
-        for row in countries_rows
-        if row.country_code or row.count
-    ]
-
-    cities: list[MapDrilldownCity] = []
-    asns: list[MapDrilldownASN] = []
-    ip_hashes: list[MapDrilldownIpHash] = []
-    paths: list[MapDrilldownPath] = []
-
-    if geo_enabled:
-        city_rows = (
-            base_query.with_entities(
-                GeoEventAgg.country_code,
-                GeoEventAgg.region,
-                GeoEventAgg.city,
-                func.sum(GeoEventAgg.count).label("count"),
-            )
-            .group_by(GeoEventAgg.country_code, GeoEventAgg.region, GeoEventAgg.city)
-            .order_by(func.sum(GeoEventAgg.count).desc())
-            .limit(50)
-            .all()
-        )
-        cities = [
-            MapDrilldownCity(
-                country_code=row.country_code,
-                region=row.region,
-                city=row.city,
-                count=int(row.count or 0),
-            )
-            for row in city_rows
-            if row.city or row.region or row.country_code
-        ]
-
-        asn_rows = (
-            base_query.with_entities(
-                GeoEventAgg.asn_number,
-                GeoEventAgg.asn_org,
-                func.sum(GeoEventAgg.count).label("count"),
-            )
-            .group_by(GeoEventAgg.asn_number, GeoEventAgg.asn_org)
-            .order_by(func.sum(GeoEventAgg.count).desc())
-            .limit(50)
-            .all()
-        )
-        asns = [
-            MapDrilldownASN(
-                asn_number=row.asn_number,
-                asn_org=row.asn_org,
-                count=int(row.count or 0),
-            )
-            for row in asn_rows
-            if row.asn_number or row.asn_org
-        ]
-
-        ip_hashes = _query_ip_hashes(
-            db,
-            tenant_id=tenant_id,
-            from_ts=from_ts,
-            to_ts=to_ts,
-            bucket_start=bucket_start,
-            category=category,
-            website_id=website_id,
-            env_id=env_id,
-            country_code=country_code,
-            lat=lat,
-            lon=lon,
-            radius_km=radius_km,
-        )
-        paths = _query_top_paths(
-            db,
-            tenant_id=tenant_id,
-            from_ts=from_ts,
-            to_ts=to_ts,
-            bucket_start=bucket_start,
-            category=category,
-            website_id=website_id,
-            env_id=env_id,
+    with trace_span(
+        "map.drilldown",
+        tenant_id=tenant_id,
+        website_id=website_id,
+        environment_id=env_id,
+        category=category,
+    ):
+        base_query = db.query(GeoEventAgg).filter(GeoEventAgg.tenant_id == tenant_id)
+        if website_id:
+            base_query = base_query.filter(GeoEventAgg.website_id == website_id)
+        if env_id:
+            base_query = base_query.filter(GeoEventAgg.environment_id == env_id)
+        if category:
+            base_query = base_query.filter(GeoEventAgg.event_category == category)
+        if severity:
+            base_query = base_query.filter(GeoEventAgg.severity == severity)
+        base_query = _apply_time_filters(base_query, GeoEventAgg.bucket_start, from_ts, to_ts)
+        if bucket_start:
+            bucket_start = _normalize_ts(bucket_start)
+            base_query = base_query.filter(GeoEventAgg.bucket_start == bucket_start)
+        base_query = _apply_location_filter(
+            base_query,
             country_code=country_code,
             lat=lat,
             lon=lon,
             radius_km=radius_km,
         )
 
-    return MapDrilldownResponse(
-        countries=countries,
-        cities=cities,
-        asns=asns,
-        ip_hashes=ip_hashes,
-        paths=paths,
-    )
+        countries_rows = (
+            base_query.with_entities(
+                GeoEventAgg.country_code.label("country_code"),
+                func.sum(GeoEventAgg.count).label("count"),
+            )
+            .group_by(GeoEventAgg.country_code)
+            .order_by(func.sum(GeoEventAgg.count).desc())
+            .limit(20)
+            .all()
+        )
+        countries = [
+            MapDrilldownCountry(country_code=row.country_code, count=int(row.count or 0))
+            for row in countries_rows
+            if row.country_code or row.count
+        ]
+
+        cities: list[MapDrilldownCity] = []
+        asns: list[MapDrilldownASN] = []
+        ip_hashes: list[MapDrilldownIpHash] = []
+        paths: list[MapDrilldownPath] = []
+
+        if geo_enabled:
+            city_rows = (
+                base_query.with_entities(
+                    GeoEventAgg.country_code,
+                    GeoEventAgg.region,
+                    GeoEventAgg.city,
+                    func.sum(GeoEventAgg.count).label("count"),
+                )
+                .group_by(GeoEventAgg.country_code, GeoEventAgg.region, GeoEventAgg.city)
+                .order_by(func.sum(GeoEventAgg.count).desc())
+                .limit(50)
+                .all()
+            )
+            cities = [
+                MapDrilldownCity(
+                    country_code=row.country_code,
+                    region=row.region,
+                    city=row.city,
+                    count=int(row.count or 0),
+                )
+                for row in city_rows
+                if row.city or row.region or row.country_code
+            ]
+
+            asn_rows = (
+                base_query.with_entities(
+                    GeoEventAgg.asn_number,
+                    GeoEventAgg.asn_org,
+                    func.sum(GeoEventAgg.count).label("count"),
+                )
+                .group_by(GeoEventAgg.asn_number, GeoEventAgg.asn_org)
+                .order_by(func.sum(GeoEventAgg.count).desc())
+                .limit(50)
+                .all()
+            )
+            asns = [
+                MapDrilldownASN(
+                    asn_number=row.asn_number,
+                    asn_org=row.asn_org,
+                    count=int(row.count or 0),
+                )
+                for row in asn_rows
+                if row.asn_number or row.asn_org
+            ]
+
+            ip_hashes = _query_ip_hashes(
+                db,
+                tenant_id=tenant_id,
+                from_ts=from_ts,
+                to_ts=to_ts,
+                bucket_start=bucket_start,
+                category=category,
+                website_id=website_id,
+                env_id=env_id,
+                country_code=country_code,
+                lat=lat,
+                lon=lon,
+                radius_km=radius_km,
+            )
+            paths = _query_top_paths(
+                db,
+                tenant_id=tenant_id,
+                from_ts=from_ts,
+                to_ts=to_ts,
+                bucket_start=bucket_start,
+                category=category,
+                website_id=website_id,
+                env_id=env_id,
+                country_code=country_code,
+                lat=lat,
+                lon=lon,
+                radius_km=radius_km,
+            )
+
+        return MapDrilldownResponse(
+            countries=countries,
+            cities=cities,
+            asns=asns,
+            ip_hashes=ip_hashes,
+            paths=paths,
+        )

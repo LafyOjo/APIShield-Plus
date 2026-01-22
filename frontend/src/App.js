@@ -22,6 +22,8 @@ import SecurityMapPage from "./SecurityMapPage";
 import SecurityEventsPage from "./SecurityEventsPage";
 import RevenueIntegrityIncidentsPage from "./RevenueIntegrityIncidentsPage";
 import RevenueIntegrityIncidentDetailPage from "./RevenueIntegrityIncidentDetailPage";
+import NotificationsSettingsPage from "./NotificationsSettingsPage";
+import BillingPage from "./BillingPage";
 import "./App.css";
 
 /*
@@ -137,6 +139,8 @@ function App() {
   const isEventsRoute =
     currentRoute.startsWith("/dashboard/security/events") ||
     currentRoute.startsWith("/security/events");
+  const isNotificationsRoute = currentRoute.startsWith("/dashboard/settings/notifications");
+  const isBillingRoute = currentRoute.startsWith("/billing");
   const revenuePrefix = "/dashboard/revenue-integrity/incidents";
   const incidentDetailMatch = currentRoute.match(
     /^\/dashboard\/revenue-integrity\/incidents\/(\d+)/
@@ -184,7 +188,10 @@ function App() {
         <div className="row">
           <button
             className={`btn secondary nav-tab ${
-              !isMapRoute && !isEventsRoute ? "active" : ""
+              !isMapRoute && !isEventsRoute && !isRevenueRoute && !isNotificationsRoute
+                && !isBillingRoute
+                ? "active"
+                : ""
             }`}
             onClick={() => navigate("/")}
           >
@@ -208,6 +215,12 @@ function App() {
           >
             Revenue Integrity
           </button>
+          <button
+            className={`btn secondary nav-tab ${isNotificationsRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/settings/notifications")}
+          >
+            Notifications
+          </button>
           <button className="btn secondary" onClick={toggleTheme}>
             {isDark ? "Light mode" : "Dark mode"}
           </button>
@@ -225,6 +238,10 @@ function App() {
         <SecurityMapPage />
       ) : isEventsRoute ? (
         <SecurityEventsPage />
+      ) : isNotificationsRoute ? (
+        <NotificationsSettingsPage />
+      ) : isBillingRoute ? (
+        <BillingPage />
       ) : (
         <>
           <section className="card">

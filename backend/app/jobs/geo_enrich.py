@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.db import SessionLocal
+from app.core.metrics import record_job_run
 from app.core.time import utcnow
+from app.core.tracing import trace_span
 from app.geo.enrichment import get_or_lookup_enrichment, mark_ip_seen
 from app.models.alerts import Alert
 from app.models.audit_logs import AuditLog
@@ -233,13 +235,27 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    with SessionLocal() as db:
-        processed = run_geo_enrichment(
-            db,
-            lookback_minutes=args.lookback_minutes,
-            max_items=args.max_items,
-        )
-    logger.info("Geo enrichment run complete. processed=%s", processed)
+    processed = 0
+    success = True
+    try:
+        with SessionLocal() as db:
+            with trace_span(
+                "job.geo_enrich",
+                lookback_minutes=args.lookback_minutes,
+                max_items=args.max_items,
+            ):
+                processed = run_geo_enrichment(
+                    db,
+                    lookback_minutes=args.lookback_minutes,
+                    max_items=args.max_items,
+                )
+        logger.info("Geo enrichment run complete. processed=%s", processed)
+    except Exception:
+        success = False
+        logger.exception("Geo enrichment job failed")
+        raise
+    finally:
+        record_job_run(job_name="geo_enrich", success=success)
     if args.once:
         return
 

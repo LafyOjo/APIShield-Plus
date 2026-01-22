@@ -1,5 +1,4 @@
 from typing import Any
-import time
 
 from sqlalchemy.orm import Session
 
@@ -23,27 +22,10 @@ ALLOWED_ENTITLEMENT_SOURCES = {
     "promotion",
 }
 
-ENTITLEMENT_CACHE_TTL_SECONDS = 30
-_ENTITLEMENT_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
-
-
-def _get_cached_entitlements(tenant_id: int) -> dict[str, Any] | None:
-    cached = _ENTITLEMENT_CACHE.get(tenant_id)
-    if not cached:
-        return None
-    expires_at, payload = cached
-    if time.monotonic() > expires_at:
-        _ENTITLEMENT_CACHE.pop(tenant_id, None)
-        return None
-    return payload
-
-
-def _set_cached_entitlements(tenant_id: int, payload: dict[str, Any]) -> None:
-    _ENTITLEMENT_CACHE[tenant_id] = (time.monotonic() + ENTITLEMENT_CACHE_TTL_SECONDS, payload)
-
-
 def invalidate_entitlement_cache(tenant_id: int) -> None:
-    _ENTITLEMENT_CACHE.pop(tenant_id, None)
+    from app.entitlements.resolver import invalidate_entitlement_cache as invalidate_cache
+
+    invalidate_cache(tenant_id)
 
 
 def resolve_entitlements(plan: Plan) -> dict:
@@ -100,21 +82,9 @@ def resolve_effective_entitlements(
     *,
     use_cache: bool = True,
 ) -> dict[str, dict[str, Any]]:
-    if use_cache:
-        cached = _get_cached_entitlements(tenant_id)
-        if cached is not None:
-            return cached
-    plan = get_tenant_plan(db, tenant_id)
-    defaults = get_plan_defaults(plan)
-    features = dict(defaults["features"])
-    overrides = get_overrides(db, tenant_id)
-    for entitlement in overrides:
-        if entitlement.feature in ALLOWED_FEATURES:
-            features[entitlement.feature] = bool(entitlement.enabled)
-    payload = {"features": features, "limits": defaults["limits"]}
-    if use_cache:
-        _set_cached_entitlements(tenant_id, payload)
-    return payload
+    from app.entitlements.resolver import resolve_entitlements_for_tenant
+
+    return resolve_entitlements_for_tenant(db, tenant_id, use_cache=use_cache)
 
 
 def get_effective_entitlements(db: Session, tenant_id: int) -> list[dict]:
@@ -141,17 +111,38 @@ def get_effective_entitlements(db: Session, tenant_id: int) -> list[dict]:
 
 
 def build_tenant_context_snapshot(db: Session, tenant_id: int) -> dict[str, Any]:
-    plan = get_tenant_plan(db, tenant_id)
     entitlements = resolve_effective_entitlements(db, tenant_id)
     return {
         "tenant_id": tenant_id,
-        "plan_name": plan.name if plan else None,
+        "plan_name": entitlements.get("plan_name"),
         "features": entitlements["features"],
         "limits": entitlements["limits"],
         "usage": None,
     }
 
 
-def assert_can_create_website(tenant_id: int) -> bool:
-    _ = tenant_id
+def assert_can_create_website(db: Session, tenant_id: int) -> bool:
+    from app.models.enums import WebsiteStatusEnum
+    from app.models.websites import Website
+    from app.entitlements.enforcement import assert_limit
+
+    entitlements = resolve_effective_entitlements(db, tenant_id)
+    limits = entitlements.get("limits", {}) if entitlements else {}
+    limit_value = limits.get("websites")
+    try:
+        max_websites = int(limit_value)
+    except (TypeError, ValueError):
+        max_websites = None
+    if not max_websites:
+        return True
+    current = (
+        db.query(Website)
+        .filter(
+            Website.tenant_id == tenant_id,
+            Website.status != WebsiteStatusEnum.DELETED,
+            Website.deleted_at.is_(None),
+        )
+        .count()
+    )
+    assert_limit(entitlements, "websites", current, mode="hard")
     return True

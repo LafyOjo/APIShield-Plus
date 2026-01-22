@@ -86,4 +86,7 @@ def update_settings(db: Session, tenant_id: int, changes: dict) -> TenantSetting
         settings_row.alert_prefs = {**current, **incoming}
     db.commit()
     db.refresh(settings_row)
+    from app.core.entitlements import invalidate_entitlement_cache
+
+    invalidate_entitlement_cache(tenant_id)
     return settings_row

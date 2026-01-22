@@ -8,6 +8,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
+from app.core.metrics import record_job_run
+from app.core.tracing import trace_span
 from app.insights.incident_status import evaluate_status_transition
 from app.insights.recovery import DEFAULT_POST_WINDOW_HOURS, compute_recovery
 from app.models.incidents import Incident
@@ -124,16 +126,31 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    with SessionLocal() as db:
-        updated = run_recovery_measurement(
-            db,
-            lookback_hours=args.lookback_hours,
-            max_items=args.max_items,
-            window_hours=args.window_hours,
-            threshold=args.threshold,
-            force=args.force,
-        )
-    logger.info("Recovery measurement run complete. updated=%s", updated)
+    updated = 0
+    success = True
+    try:
+        with SessionLocal() as db:
+            with trace_span(
+                "job.recovery_measurement",
+                lookback_hours=args.lookback_hours,
+                max_items=args.max_items,
+                window_hours=args.window_hours,
+            ):
+                updated = run_recovery_measurement(
+                    db,
+                    lookback_hours=args.lookback_hours,
+                    max_items=args.max_items,
+                    window_hours=args.window_hours,
+                    threshold=args.threshold,
+                    force=args.force,
+                )
+        logger.info("Recovery measurement run complete. updated=%s", updated)
+    except Exception:
+        success = False
+        logger.exception("Recovery measurement job failed")
+        raise
+    finally:
+        record_job_run(job_name="recovery_measurement", success=success)
     if args.once:
         return
 

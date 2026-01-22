@@ -9,9 +9,11 @@ from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.entitlements import resolve_effective_entitlements
 from app.core.db import SessionLocal
+from app.core.entitlements import resolve_effective_entitlements
+from app.core.metrics import record_job_run
 from app.core.time import utcnow
+from app.core.tracing import trace_span
 from app.models.alerts import Alert
 from app.models.behaviour_events import BehaviourEvent
 from app.models.events import Event
@@ -467,13 +469,27 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    with SessionLocal() as db:
-        updated = run_geo_aggregate(
-            db,
-            lookback_minutes=args.lookback_minutes,
-            max_buckets=args.max_buckets,
-        )
-    logger.info("Geo aggregation run complete. updated=%s", updated)
+    updated = 0
+    success = True
+    try:
+        with SessionLocal() as db:
+            with trace_span(
+                "job.geo_aggregate",
+                lookback_minutes=args.lookback_minutes,
+                max_buckets=args.max_buckets,
+            ):
+                updated = run_geo_aggregate(
+                    db,
+                    lookback_minutes=args.lookback_minutes,
+                    max_buckets=args.max_buckets,
+                )
+        logger.info("Geo aggregation run complete. updated=%s", updated)
+    except Exception:
+        success = False
+        logger.exception("Geo aggregation job failed")
+        raise
+    finally:
+        record_job_run(job_name="geo_aggregate", success=success)
     if args.once:
         return
 

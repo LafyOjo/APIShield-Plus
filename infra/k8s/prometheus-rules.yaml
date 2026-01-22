@@ -1,0 +1,55 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: apishield-observability-rules
+  labels:
+    app: apishield
+spec:
+  groups:
+    - name: apishield-observability
+      rules:
+        - alert: ApiErrorRateHigh
+          expr: |
+            sum(rate(requests_total{status_code=~"5.."}[5m]))
+              /
+            sum(rate(requests_total[5m]))
+              > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "API 5xx error rate above 5%"
+            description: "Check recent deploys and error logs for request_id correlation."
+
+        - alert: Ingest429Spike
+          expr: |
+            sum(rate(requests_total{route=~"/api/v1/ingest/.*",status_code="429"}[5m]))
+              > 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Ingest 429 responses spiking"
+            description: "Rate limiting may be throttling ingest; inspect ingest latency and client activity."
+
+        - alert: GeoJobFailures
+          expr: |
+            increase(job_run_total{job_name=~"geo_enrich|geo_aggregate",status="failure"}[15m])
+              > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Geo pipeline job failures detected"
+            description: "Investigate job logs and enrichment configuration."
+
+        - alert: NotificationDeliveryFailures
+          expr: |
+            sum(rate(notifications_failed_total[5m]))
+              > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Notification delivery failures"
+            description: "Check channel configuration and delivery logs."

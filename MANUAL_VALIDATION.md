@@ -109,3 +109,10 @@ Actual IDs and timestamps will vary between runs.
    - Verify the applied history shows who applied the action and when.
    - If recovery measurements exist, confirm recovery score and before/after metrics render.
    - Timeline should include incident start/end, applied actions, and recovery checks.
+
+10. **Notifications settings**
+   - Open `/dashboard/settings/notifications`.
+   - Create a Slack channel with a webhook URL and save it.
+   - Use **Test** to send a notification and confirm last-tested timestamp updates.
+   - Create a rule that routes to the channel.
+   - Open the History tab and confirm deliveries appear with status and timestamps.

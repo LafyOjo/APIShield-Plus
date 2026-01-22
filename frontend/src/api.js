@@ -186,6 +186,23 @@ export async function apiFetch(path, options = {}) {
     throw networkErr;
   }
 
+  const requestId = resp.headers.get("X-Request-ID");
+  const errorCode = resp.headers.get("X-Error-Code");
+  if (requestId) {
+    const logPayload = {
+      requestId,
+      status: resp.status,
+      method: (fetchOptions.method || "GET").toUpperCase(),
+      url,
+    };
+    if (errorCode) logPayload.errorCode = errorCode;
+    if (!resp.ok) {
+      console.warn("api.response", logPayload);
+    } else if (process.env.NODE_ENV !== "production") {
+      console.debug("api.response", logPayload);
+    }
+  }
+
   /*
   # If we didn’t get a 401 (or we purposely skipped auth/prompt), we’re done.
   # Returning the raw Response object keeps this function flexible—callers

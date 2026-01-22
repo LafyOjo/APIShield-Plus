@@ -35,8 +35,10 @@ from .domain_verification import DomainVerification
 from .project_tags import ProjectTag, WebsiteTag
 from .external_integrations import ExternalIntegration
 from .notification_channels import NotificationChannel
+from .notification_deliveries import NotificationDelivery
 from .notification_rules import NotificationRule, NotificationRuleChannel
 from .user_profiles import UserProfile
+from .backfill_runs import BackfillRun
 
 __all__ = [
     "Alert",
@@ -78,7 +80,9 @@ __all__ = [
     "WebsiteTag",
     "ExternalIntegration",
     "NotificationChannel",
+    "NotificationDelivery",
     "NotificationRule",
     "NotificationRuleChannel",
     "UserProfile",
+    "BackfillRun",
 ]

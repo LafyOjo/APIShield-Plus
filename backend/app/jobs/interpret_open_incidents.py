@@ -7,7 +7,9 @@ from datetime import timedelta
 from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
+from app.core.metrics import record_job_run
 from app.core.time import utcnow
+from app.core.tracing import trace_span
 from app.insights.interpretation import interpret_incident_record
 from app.insights.incident_status import evaluate_status_transition
 from app.insights.prescriptions import generate_prescriptions
@@ -109,14 +111,28 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    with SessionLocal() as db:
-        updated = run_interpret_open_incidents(
-            db,
-            lookback_hours=args.lookback_hours,
-            max_items=args.max_items,
-            force=args.force,
-        )
-    logger.info("Incident interpretation run complete. updated=%s", updated)
+    updated = 0
+    success = True
+    try:
+        with SessionLocal() as db:
+            with trace_span(
+                "job.interpret_open_incidents",
+                lookback_hours=args.lookback_hours,
+                max_items=args.max_items,
+            ):
+                updated = run_interpret_open_incidents(
+                    db,
+                    lookback_hours=args.lookback_hours,
+                    max_items=args.max_items,
+                    force=args.force,
+                )
+        logger.info("Incident interpretation run complete. updated=%s", updated)
+    except Exception:
+        success = False
+        logger.exception("Incident interpretation job failed")
+        raise
+    finally:
+        record_job_run(job_name="interpret_open_incidents", success=success)
     if args.once:
         return
 

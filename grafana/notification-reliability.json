@@ -1,0 +1,55 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Notifications Sent Rate",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(notifications_sent_total[5m])) by (channel_type)",
+          "legendFormat": "{{channel_type}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list" },
+        "tooltip": { "mode": "single" }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "title": "Notifications Failed Rate",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(notifications_failed_total[5m])) by (channel_type)",
+          "legendFormat": "{{channel_type}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list" },
+        "tooltip": { "mode": "single" }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["observability", "notifications"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "",
+  "title": "Notification Reliability",
+  "version": 1
+}

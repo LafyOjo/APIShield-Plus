@@ -3,6 +3,7 @@
 # It’s the heart of the project where everything is connected.
 
 from fastapi import APIRouter, FastAPI, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
@@ -19,6 +20,7 @@ from app.core.metrics import MetricsMiddleware
 from app.tenancy.middleware import RequestContextMiddleware
 from app.core.re_auth import ReAuthMiddleware
 from app.core.versioning import API_PREFIX, API_V1_PREFIX
+from app.entitlements.enforcement import FeatureNotEnabled, PlanLimitExceeded, RangeClampedNotice
 
 # Bring in all routers (grouped by feature area)
 from app.api.score import router as score_router
@@ -52,6 +54,8 @@ from app.api.analytics import router as analytics_router
 from app.api.map import router as map_router
 from app.api.incidents import router as incidents_router
 from app.api.prescriptions import router as prescriptions_router
+from app.api.billing import router as billing_router
+from app.api.notifications import router as notifications_router
 
 # Create DB tables right away so the app doesn’t hit missing
 # schema issues later. This runs once on startup.
@@ -59,6 +63,27 @@ Base.metadata.create_all(bind=engine)
 
 # Spin up the FastAPI app. Title shows in Swagger docs.
 app = FastAPI(title="APIShield+")
+
+
+@app.exception_handler(PlanLimitExceeded)
+def handle_plan_limit(_request, exc: PlanLimitExceeded):
+    response = JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    response.headers["X-Error-Code"] = exc.code
+    return response
+
+
+@app.exception_handler(FeatureNotEnabled)
+def handle_feature_disabled(_request, exc: FeatureNotEnabled):
+    response = JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    response.headers["X-Error-Code"] = exc.code
+    return response
+
+
+@app.exception_handler(RangeClampedNotice)
+def handle_range_clamped(_request, exc: RangeClampedNotice):
+    response = JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    response.headers["X-Error-Code"] = exc.code
+    return response
 
 # Observability and logging layers
 # These middlewares capture logs, request metrics, and access
@@ -116,6 +141,8 @@ routers = [
     map_router,
     incidents_router,
     prescriptions_router,
+    notifications_router,
+    billing_router,
 ]
 
 for r in routers:

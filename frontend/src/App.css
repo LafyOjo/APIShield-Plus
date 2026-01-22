@@ -475,6 +475,152 @@ input::placeholder { color: var(--muted); }
   letter-spacing: 0.04em;
 }
 
+.notifications-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.notifications-tenant {
+  min-width: 220px;
+}
+
+.notifications-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.notifications-tabs .btn.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: transparent;
+}
+
+.notifications-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+
+.notifications-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.notifications-table th {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.notifications-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.notifications-form {
+  display: grid;
+  gap: 12px;
+}
+
+.notifications-form-card {
+  align-self: start;
+}
+
+.notifications-checkboxes {
+  display: grid;
+  gap: 6px;
+}
+
+.notifications-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.notifications-upgrade {
+  border: 1px solid color-mix(in oklab, var(--accent) 40%, var(--border));
+  background: color-mix(in oklab, var(--accent) 12%, var(--card-bg));
+}
+
+.notifications-upgrade-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.notifications-upgrade-list {
+  margin: 12px 0 0 0;
+  padding-left: 18px;
+}
+
+.notifications-history-filters {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.billing-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.billing-tenant {
+  min-width: 220px;
+}
+
+.billing-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.billing-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.billing-plan {
+  display: grid;
+  gap: 12px;
+}
+
+.billing-plan-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.billing-price {
+  font-weight: 700;
+}
+
+.billing-features {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
 .incident-title {
   font-weight: 600;
 }
@@ -529,6 +675,16 @@ input::placeholder { color: var(--muted); }
 .status-chip.snoozed {
   background: color-mix(in oklab, #38bdf8 20%, var(--card-bg));
   color: #0369a1;
+}
+
+.status-chip.enabled {
+  background: color-mix(in oklab, #22c55e 18%, var(--card-bg));
+  color: #166534;
+}
+
+.status-chip.disabled {
+  background: color-mix(in oklab, #a3a3a3 16%, var(--card-bg));
+  color: #404040;
 }
 
 .incident-detail-header {
@@ -860,4 +1016,5 @@ input::placeholder { color: var(--muted); }
   .attack-section { grid-template-columns: 1fr; }
   .security-box { position: static; }
   .map-grid { grid-template-columns: 1fr; }
+  .notifications-grid { grid-template-columns: 1fr; }
 }

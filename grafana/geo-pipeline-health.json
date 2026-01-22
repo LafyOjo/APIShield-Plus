@@ -1,0 +1,54 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Geo Job Runs",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(job_run_total{job_name=~\"geo_enrich|geo_aggregate\"}[15m])) by (job_name, status)",
+          "legendFormat": "{{job_name}} {{status}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list" },
+        "tooltip": { "mode": "single" }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "title": "Geo Job Failures (last 1h)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(job_run_total{job_name=~\"geo_enrich|geo_aggregate\",status=\"failure\"}[1h]))",
+          "legendFormat": "failures"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false }
+      },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 8 }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["observability", "geo"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "",
+  "title": "Geo Pipeline Health",
+  "version": 1
+}

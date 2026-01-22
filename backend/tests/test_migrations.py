@@ -51,6 +51,8 @@ def test_migration_upgrade_downgrade_cycle(tmp_path):
         "notification_channels",
         "notification_rules",
         "notification_rule_channels",
+        "notification_deliveries",
+        "backfill_runs",
         "project_tags",
         "website_tags",
         "user_profiles",
@@ -80,3 +82,18 @@ def test_migration_upgrade_downgrade_cycle(tmp_path):
     command.upgrade(config, "head")
     tables = _table_names(db_url)
     assert expected.issubset(tables)
+
+
+def test_migrations_apply_clean_db(tmp_path):
+    db_path = tmp_path / "migration_clean.db"
+    db_url = f"sqlite:///{db_path}"
+    os.environ["DATABASE_URL"] = db_url
+    os.environ["SECRET_KEY"] = "secret"
+
+    config = _make_alembic_config(db_url)
+
+    command.upgrade(config, "head")
+    tables = _table_names(db_url)
+    assert "alembic_version" in tables
+
+    command.downgrade(config, "base")

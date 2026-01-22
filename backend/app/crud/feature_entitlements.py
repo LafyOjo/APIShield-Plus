@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.core.entitlements import validate_entitlement_source, validate_feature
+from app.core.entitlements import ALLOWED_FEATURES, validate_entitlement_source, validate_feature
 from app.models.feature_entitlements import FeatureEntitlement
 from app.models.plans import Plan
 
@@ -65,13 +65,16 @@ def seed_entitlements_from_plan(
 ) -> list[FeatureEntitlement]:
     if plan is None:
         return []
-    features = plan.features_json or {}
-    seeded: list[FeatureEntitlement] = []
-    for feature, enabled in features.items():
+    plan_features = {feature: False for feature in ALLOWED_FEATURES}
+    for feature, enabled in (plan.features_json or {}).items():
         try:
             validate_feature(feature)
         except ValueError:
             continue
+        plan_features[feature] = bool(enabled)
+
+    seeded: list[FeatureEntitlement] = []
+    for feature, enabled in plan_features.items():
         existing = (
             db.query(FeatureEntitlement)
             .filter(

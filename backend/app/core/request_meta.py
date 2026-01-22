@@ -25,6 +25,7 @@ def build_request_meta(
     *,
     request_id: str | None = None,
     client_ip: str | None = None,
+    tenant_id: str | None = None,
 ) -> dict[str, str | None]:
     resolved_request_id = (
         request_id
@@ -35,6 +36,7 @@ def build_request_meta(
     return {
         "request_id": resolved_request_id,
         "client_ip": client_ip,
+        "tenant_id": tenant_id,
         "user_agent": request.headers.get("User-Agent"),
         "path": request.url.path,
         "method": request.method,

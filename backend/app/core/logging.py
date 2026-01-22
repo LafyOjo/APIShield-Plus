@@ -1,29 +1,151 @@
-# This middleware is all about visibility. It logs every HTTP
-# request that passes through the app, along with its method,
-# path, and optionally the Authorization header if present.
-# ------------------------------------------------------------
+# This middleware records a structured JSON log for each request.
+# It captures latency, route, tenant, user, and request_id for traceability.
 
+from __future__ import annotations
+
+import json
 import logging
+import os
+from datetime import datetime, timezone
+from time import monotonic
+from typing import Any
+
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# Configure a logger named "api_logger". We set the logging
-# level to INFO so that normal request flow is recorded.
-# Developers can raise or lower this as needed.
-logger = logging.getLogger("api_logger")
-logging.basicConfig(level=logging.INFO)
+from app.core.security import decode_access_token
 
 
-# Middleware means this code runs before and after each request.
-# Here we grab the HTTP method + path, and optionally include
-# the Authorization header for debugging. Then we call the
-# downstream handler and return its response.
+_STANDARD_ATTRS = {
+    "args",
+    "asctime",
+    "created",
+    "exc_info",
+    "exc_text",
+    "filename",
+    "funcName",
+    "levelname",
+    "levelno",
+    "lineno",
+    "module",
+    "msecs",
+    "message",
+    "msg",
+    "name",
+    "pathname",
+    "process",
+    "processName",
+    "relativeCreated",
+    "stack_info",
+    "thread",
+    "threadName",
+}
+
+_ALWAYS_FIELDS = {
+    "request_id",
+    "tenant_id",
+    "user_id",
+    "route",
+    "method",
+    "status_code",
+    "duration_ms",
+    "error_code",
+    "trace_id",
+    "span_id",
+}
+
+
+class JsonLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, Any] = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        for key, value in record.__dict__.items():
+            if key in _STANDARD_ATTRS:
+                continue
+            if value is None and key not in _ALWAYS_FIELDS:
+                continue
+            payload[key] = value
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
+
+
+def get_structured_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonLogFormatter())
+    logger.addHandler(handler)
+    logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
+    logger.propagate = False
+    return logger
+
+
+logger = get_structured_logger("api_logger")
+
+
+def _resolve_route(request: Request) -> str:
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None)
+    return route_path or request.url.path
+
+
+def _resolve_user_id(request: Request) -> str | None:
+    auth = request.headers.get("Authorization")
+    if auth and auth.startswith("Bearer "):
+        token = auth.split()[1]
+        try:
+            payload = decode_access_token(token)
+            return payload.get("user_id") or payload.get("sub")
+        except Exception:
+            return None
+    return None
+
+
 class APILoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        token = request.headers.get("Authorization")
-        if token:
-            logger.info("%s %s Authorization=%s", request.method, request.url.path, token)
-        else:
-            logger.info("%s %s", request.method, request.url.path)
-        response = await call_next(request)
+        start = monotonic()
+        from app.core.tracing import get_trace_id, get_span_id
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = round((monotonic() - start) * 1000.0, 2)
+            logger.exception(
+                "request.failed",
+                extra={
+                    "request_id": getattr(request.state, "request_id", None),
+                    "tenant_id": getattr(request.state, "tenant_id", None),
+                    "user_id": _resolve_user_id(request),
+                    "route": _resolve_route(request),
+                    "method": request.method,
+                    "status_code": 500,
+                    "duration_ms": duration_ms,
+                    "error_code": "unhandled_exception",
+                    "trace_id": get_trace_id(),
+                    "span_id": get_span_id(),
+                },
+            )
+            raise
+
+        duration_ms = round((monotonic() - start) * 1000.0, 2)
+        logger.info(
+            "request.completed",
+            extra={
+                "request_id": getattr(request.state, "request_id", None),
+                "tenant_id": getattr(request.state, "tenant_id", None),
+                "user_id": _resolve_user_id(request),
+                "route": _resolve_route(request),
+                "method": request.method,
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+                "error_code": response.headers.get("X-Error-Code"),
+                "trace_id": get_trace_id(),
+                "span_id": get_span_id(),
+            },
+        )
         return response

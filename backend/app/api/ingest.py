@@ -4,25 +4,27 @@ from datetime import datetime
 import json
 import logging
 from ipaddress import ip_address
+from time import monotonic
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.event_types import normalize_path
 from app.core.anomaly import AnomalyContext, evaluate_event_for_anomaly
-from app.core.db import get_db
 from app.core.config import settings
+from app.core.db import get_db
 from app.core.entitlements import resolve_effective_entitlements
+from app.core.event_types import normalize_path
+from app.core.metrics import record_ingest_event, record_ingest_latency
 from app.core.usage import get_or_create_current_period_usage, increment_storage
+from app.entitlements.enforcement import assert_limit
 from app.core.privacy import hash_ip
 from app.core.rate_limit import allow, is_banned, register_invalid_attempt
+from app.core.tracing import trace_span
 from app.core.usage import increment_events
 from app.core.utils.domain import normalize_domain
 from app.crud.api_keys import get_api_key_by_public_key, mark_api_key_used
-from app.crud.plans import get_plan_by_name
-from app.crud.subscriptions import get_active_subscription_for_tenant
 from app.crud.behaviour_events import create_behaviour_event, get_behaviour_event_by_event_id
 from app.crud.behaviour_sessions import upsert_behaviour_session
 from app.geo.enrichment import mark_ip_seen
@@ -79,16 +81,6 @@ def _coerce_positive_int(value, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
-def _coerce_optional_int(value) -> int | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if parsed > 0 else None
-
-
 def _enforce_body_limit(request: Request) -> None:
     max_bytes = settings.INGEST_MAX_BODY_BYTES
     content_length = request.headers.get("Content-Length")
@@ -129,6 +121,8 @@ async def ingest_browser_event(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    start_time = monotonic()
+    ingest_type = "browser"
     _enforce_body_limit(request)
     body = await request.body()
     if body and len(body) > settings.INGEST_MAX_BODY_BYTES:
@@ -235,6 +229,17 @@ async def ingest_browser_event(
     )
     if existing_event:
         mark_api_key_used(db, api_key.public_key)
+        record_ingest_event(
+            tenant_id=api_key.tenant_id,
+            website_id=website.id,
+            environment_id=environment.id,
+            event_type=payload.type,
+            ingest_type=ingest_type,
+        )
+        record_ingest_latency(
+            ingest_type=ingest_type,
+            duration_ms=(monotonic() - start_time) * 1000.0,
+        )
         return IngestBrowserResponse(
             ok=True,
             received_at=datetime.utcnow(),
@@ -244,106 +249,147 @@ async def ingest_browser_event(
 
     payload_bytes = _estimate_payload_bytes(payload)
     usage = get_or_create_current_period_usage(api_key.tenant_id, db=db)
-    events_limit = _coerce_optional_int(limits.get("events_per_month"))
-    subscription = get_active_subscription_for_tenant(db, api_key.tenant_id)
-    plan = subscription.plan if subscription and subscription.plan else get_plan_by_name(db, "Free")
-    plan_name = plan.name if plan else "Free"
-    if plan_name == "Free" and events_limit is not None:
-        if usage.events_ingested >= events_limit:
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail="Ingest quota exceeded for plan",
-            )
+    assert_limit(
+        entitlements,
+        "events_per_month",
+        int(usage.events_ingested or 0),
+        mode="hard",
+        message="Ingest quota exceeded for plan",
+    )
 
-    if payload.session_id:
-        upsert_behaviour_session(
-            db,
-            tenant_id=api_key.tenant_id,
-            website_id=website.id,
-            environment_id=environment.id,
-            session_id=payload.session_id,
-            event_type=payload.type,
-            event_ts=payload.ts,
-            path=event_path,
-            ip_hash=ip_hash,
-        )
-
-    try:
-        create_behaviour_event(
-            db,
-            tenant_id=api_key.tenant_id,
-            website_id=website.id,
-            environment_id=environment.id,
-            event_id=payload.event_id,
-            event_type=payload.type,
-            url=payload.url,
-            event_ts=payload.ts,
-            ingested_at=datetime.utcnow(),
-            path=event_path,
-            referrer=payload.referrer,
-            session_id=payload.session_id,
-            visitor_id=payload.user_id,
-            meta=payload.meta,
-            ip_hash=ip_hash,
-            client_ip=client_ip,
-            user_agent=user_agent,
-        )
-    except IntegrityError:
-        db.rollback()
-        existing_event = get_behaviour_event_by_event_id(
-            db,
-            tenant_id=api_key.tenant_id,
-            environment_id=environment.id,
-            event_id=payload.event_id,
-        )
-        if existing_event:
-            mark_api_key_used(db, api_key.public_key)
-            return IngestBrowserResponse(
-                ok=True,
-                received_at=datetime.utcnow(),
-                request_id=request_id,
-                deduped=True,
-            )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to ingest event",
-        )
-
-    try:
-        anomaly_ctx = AnomalyContext(
-            tenant_id=api_key.tenant_id,
-            website_id=website.id,
-            environment_id=environment.id,
-            session_id=payload.session_id,
-            event_id=payload.event_id,
-        )
-        signals = evaluate_event_for_anomaly(anomaly_ctx, payload)
-        if signals:
-            for signal in signals:
-                db.add(
-                    AnomalySignalEvent(
-                        tenant_id=api_key.tenant_id,
-                        website_id=website.id,
-                        environment_id=environment.id,
-                        signal_type=signal.type,
-                        severity=signal.severity,
-                        session_id=payload.session_id,
-                        event_id=payload.event_id,
-                        summary={
-                            "event_type": payload.type,
-                            "path": event_path,
-                            "evidence": signal.evidence,
-                        },
-                    )
+    with trace_span(
+        "ingest.browser",
+        tenant_id=api_key.tenant_id,
+        website_id=website.id,
+        environment_id=environment.id,
+        event_type=payload.type,
+    ):
+        if payload.session_id:
+            with trace_span(
+                "ingest.session_upsert",
+                tenant_id=api_key.tenant_id,
+                session_id=payload.session_id,
+            ):
+                upsert_behaviour_session(
+                    db,
+                    tenant_id=api_key.tenant_id,
+                    website_id=website.id,
+                    environment_id=environment.id,
+                    session_id=payload.session_id,
+                    event_type=payload.type,
+                    event_ts=payload.ts,
+                    path=event_path,
+                    ip_hash=ip_hash,
                 )
-            db.commit()
-    except Exception:
-        db.rollback()
-        logger.exception("Anomaly evaluation failed")
+
+        try:
+            with trace_span(
+                "ingest.event_insert",
+                tenant_id=api_key.tenant_id,
+                event_id=payload.event_id,
+            ):
+                create_behaviour_event(
+                    db,
+                    tenant_id=api_key.tenant_id,
+                    website_id=website.id,
+                    environment_id=environment.id,
+                    event_id=payload.event_id,
+                    event_type=payload.type,
+                    url=payload.url,
+                    event_ts=payload.ts,
+                    ingested_at=datetime.utcnow(),
+                    path=event_path,
+                    referrer=payload.referrer,
+                    session_id=payload.session_id,
+                    visitor_id=payload.user_id,
+                    meta=payload.meta,
+                    ip_hash=ip_hash,
+                    client_ip=client_ip,
+                    user_agent=user_agent,
+                )
+        except IntegrityError:
+            db.rollback()
+            existing_event = get_behaviour_event_by_event_id(
+                db,
+                tenant_id=api_key.tenant_id,
+                environment_id=environment.id,
+                event_id=payload.event_id,
+            )
+            if existing_event:
+                mark_api_key_used(db, api_key.public_key)
+                record_ingest_event(
+                    tenant_id=api_key.tenant_id,
+                    website_id=website.id,
+                    environment_id=environment.id,
+                    event_type=payload.type,
+                    ingest_type=ingest_type,
+                )
+                record_ingest_latency(
+                    ingest_type=ingest_type,
+                    duration_ms=(monotonic() - start_time) * 1000.0,
+                )
+                return IngestBrowserResponse(
+                    ok=True,
+                    received_at=datetime.utcnow(),
+                    request_id=request_id,
+                    deduped=True,
+                )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to ingest event",
+            )
+
+        try:
+            anomaly_ctx = AnomalyContext(
+                tenant_id=api_key.tenant_id,
+                website_id=website.id,
+                environment_id=environment.id,
+                session_id=payload.session_id,
+                event_id=payload.event_id,
+            )
+            with trace_span(
+                "ingest.anomaly_eval",
+                tenant_id=api_key.tenant_id,
+                event_id=payload.event_id,
+            ):
+                signals = evaluate_event_for_anomaly(anomaly_ctx, payload)
+            if signals:
+                for signal in signals:
+                    db.add(
+                        AnomalySignalEvent(
+                            tenant_id=api_key.tenant_id,
+                            website_id=website.id,
+                            environment_id=environment.id,
+                            signal_type=signal.type,
+                            severity=signal.severity,
+                            session_id=payload.session_id,
+                            event_id=payload.event_id,
+                            summary={
+                                "event_type": payload.type,
+                                "path": event_path,
+                                "evidence": signal.evidence,
+                            },
+                        )
+                    )
+                db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Anomaly evaluation failed")
 
     mark_api_key_used(db, api_key.public_key)
     increment_events(api_key.tenant_id, 1, db=db)
     increment_storage(api_key.tenant_id, payload_bytes, db=db)
+    record_ingest_event(
+        tenant_id=api_key.tenant_id,
+        website_id=website.id,
+        environment_id=environment.id,
+        event_type=payload.type,
+        ingest_type=ingest_type,
+    )
+    record_ingest_latency(
+        ingest_type=ingest_type,
+        duration_ms=(monotonic() - start_time) * 1000.0,
+    )
     return IngestBrowserResponse(
         ok=True,
         received_at=datetime.utcnow(),

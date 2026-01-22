@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import logging
 from ipaddress import ip_address
+from time import monotonic
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -11,8 +12,10 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.core.entitlements import resolve_effective_entitlements
 from app.core.keys import verify_secret
+from app.core.metrics import record_ingest_event, record_ingest_latency
 from app.core.privacy import hash_ip
 from app.core.rate_limit import allow, is_banned, register_invalid_attempt
+from app.core.tracing import trace_span
 from app.crud.api_keys import get_api_key_by_public_key, mark_api_key_used
 from app.geo.enrichment import mark_ip_seen
 from app.models.api_keys import APIKey
@@ -250,6 +253,8 @@ async def ingest_security_event(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    start_time = monotonic()
+    ingest_type = "security"
     _enforce_body_limit(request)
     client_ip = getattr(request.state, "client_ip", None) or _fallback_client_ip(request)
     banned, retry_after = is_banned(client_ip)
@@ -271,13 +276,31 @@ async def ingest_security_event(
     api_key = _resolve_api_key(db, secret, client_ip)
     _resolve_site_env(db, api_key)
     user_agent = getattr(request.state, "user_agent", None)
-    _record_security_event(
-        db,
-        api_key=api_key,
-        payload=payload,
-        source="server",
-        client_ip=client_ip,
-        user_agent=user_agent,
+    with trace_span(
+        "ingest.security",
+        tenant_id=api_key.tenant_id,
+        website_id=api_key.website_id,
+        environment_id=api_key.environment_id,
+        event_type=payload.event_type,
+    ):
+        _record_security_event(
+            db,
+            api_key=api_key,
+            payload=payload,
+            source="server",
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+    record_ingest_event(
+        tenant_id=api_key.tenant_id,
+        website_id=api_key.website_id,
+        environment_id=api_key.environment_id,
+        event_type=payload.event_type,
+        ingest_type=ingest_type,
+    )
+    record_ingest_latency(
+        ingest_type=ingest_type,
+        duration_ms=(monotonic() - start_time) * 1000.0,
     )
     return IngestSecurityResponse(ok=True, received_at=datetime.utcnow())
 
@@ -288,6 +311,8 @@ async def ingest_integrity_event(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    start_time = monotonic()
+    ingest_type = "integrity"
     _enforce_body_limit(request)
     client_ip = getattr(request.state, "client_ip", None) or _fallback_client_ip(request)
     banned, retry_after = is_banned(client_ip)
@@ -309,12 +334,30 @@ async def ingest_integrity_event(
     api_key = _resolve_public_key(db, public_key, client_ip)
     _resolve_site_env(db, api_key)
     user_agent = getattr(request.state, "user_agent", None)
-    _record_security_event(
-        db,
-        api_key=api_key,
-        payload=payload,
-        source="browser",
-        client_ip=client_ip,
-        user_agent=user_agent,
+    with trace_span(
+        "ingest.integrity",
+        tenant_id=api_key.tenant_id,
+        website_id=api_key.website_id,
+        environment_id=api_key.environment_id,
+        event_type=payload.event_type,
+    ):
+        _record_security_event(
+            db,
+            api_key=api_key,
+            payload=payload,
+            source="browser",
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+    record_ingest_event(
+        tenant_id=api_key.tenant_id,
+        website_id=api_key.website_id,
+        environment_id=api_key.environment_id,
+        event_type=payload.event_type,
+        ingest_type=ingest_type,
+    )
+    record_ingest_latency(
+        ingest_type=ingest_type,
+        duration_ms=(monotonic() - start_time) * 1000.0,
     )
     return IngestSecurityResponse(ok=True, received_at=datetime.utcnow())
