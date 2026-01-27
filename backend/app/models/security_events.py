@@ -88,3 +88,4 @@ class SecurityEvent(Base):
     asn_org = Column(String, nullable=True)
     is_datacenter = Column(Boolean, nullable=True)
     meta = Column(JSON_TYPE, nullable=True)
+    is_demo = Column(Boolean, nullable=False, default=False)

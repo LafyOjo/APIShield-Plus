@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, ACTIVE_TENANT_KEY } from "./api";
 import GeoMapView from "./GeoMapView";
+import TourOverlay from "./TourOverlay";
+import { useTour } from "./useTour";
+import DemoDataToggle from "./DemoDataToggle";
+import { useDemoData } from "./useDemoData";
 
 const TIME_RANGES = [
   { value: "24h", label: "Last 24 hours", days: 1 },
@@ -212,6 +216,7 @@ export default function SecurityMapPage() {
   const [error, setError] = useState("");
   const [planLimited, setPlanLimited] = useState(false);
   const [viewMode, setViewMode] = useState("map");
+  const { enabled: includeDemo, setEnabled: setIncludeDemo } = useDemoData();
   const [debouncedFilters, setDebouncedFilters] = useState({
     activeTenant,
     websiteId,
@@ -220,12 +225,40 @@ export default function SecurityMapPage() {
     severity,
     from: fromTs,
     to: toTs,
+    includeDemo,
   });
   const [drilldownOpen, setDrilldownOpen] = useState(false);
   const [drilldownSelection, setDrilldownSelection] = useState(null);
   const [drilldownLoading, setDrilldownLoading] = useState(false);
   const [drilldownError, setDrilldownError] = useState("");
   const [drilldownData, setDrilldownData] = useState(null);
+  const mapTour = useTour("map", activeTenant);
+
+  const mapTourSteps = useMemo(
+    () => [
+      {
+        selector: '[data-tour="map-filters"]',
+        title: "Filter your activity window",
+        body: "Choose time range, website, and severity to focus the geo map.",
+      },
+      {
+        selector: '[data-tour="map-canvas"]',
+        title: "Clusters show hotspots",
+        body: "Click a cluster or marker to drill into the underlying activity.",
+      },
+      {
+        selector: '[data-tour="map-drilldown"]',
+        title: "Drilldown explains the why",
+        body: "See top countries, ASNs, and IP hashes that make up the cluster.",
+      },
+      {
+        selector: '[data-tour="map-view-events"]',
+        title: "Investigate the raw events",
+        body: "Jump into filtered events to validate suspicious traffic quickly.",
+      },
+    ],
+    []
+  );
 
   const activeTenantLabel = useMemo(() => {
     const found = tenants.find((tenant) => String(tenant.slug) === activeTenant);
@@ -555,10 +588,11 @@ export default function SecurityMapPage() {
         severity,
         from: fromTs,
         to: toTs,
+        includeDemo,
       });
     }, 300);
     return () => clearTimeout(handle);
-  }, [activeTenant, websiteId, envId, category, severity, fromTs, toTs]);
+  }, [activeTenant, websiteId, envId, category, severity, fromTs, toTs, includeDemo]);
 
   useEffect(() => {
     if (!isValidDate(fromTs) || !isValidDate(toTs)) return;
@@ -569,9 +603,10 @@ export default function SecurityMapPage() {
     if (envId) params.set("env_id", envId);
     if (category) params.set("category", category);
     if (severity) params.set("severity", severity);
+    if (includeDemo) params.set("demo", "1");
     const nextUrl = `${window.location.pathname}?${params.toString()}${window.location.hash || ""}`;
     window.history.replaceState({}, "", nextUrl);
-  }, [fromTs, toTs, websiteId, envId, category, severity]);
+  }, [fromTs, toTs, websiteId, envId, category, severity, includeDemo]);
 
   const timeWindow = useMemo(() => {
     if (
@@ -603,6 +638,7 @@ export default function SecurityMapPage() {
       }
       if (ipHash) params.set("ip_hash", ipHash);
       if (countryCode) params.set("country_code", countryCode);
+      if (debouncedFilters.includeDemo) params.set("demo", "1");
       return `/dashboard/security/events?${params.toString()}`;
     },
     [debouncedFilters, timeWindow.from, timeWindow.to]
@@ -627,6 +663,9 @@ export default function SecurityMapPage() {
         }
         if (debouncedFilters.severity) {
           params.set("severity", debouncedFilters.severity);
+        }
+        if (debouncedFilters.includeDemo) {
+          params.set("include_demo", "true");
         }
         const resp = await apiFetch(`/api/v1/map/summary?${params.toString()}`);
         if (!resp.ok) {
@@ -708,6 +747,9 @@ export default function SecurityMapPage() {
               String(Math.round(drilldownSelection.radiusKm || 80))
             );
           }
+        }
+        if (debouncedFilters.includeDemo) {
+          params.set("include_demo", "true");
         }
         const resp = await apiFetch(`/api/v1/map/drilldown?${params.toString()}`);
         if (!resp.ok) {
@@ -934,7 +976,7 @@ export default function SecurityMapPage() {
         </div>
       </section>
 
-      <section className="card">
+      <section className="card" data-tour="map-filters">
         <div className="controls-grid">
           <div className="field">
             <label className="label">
@@ -1066,6 +1108,13 @@ export default function SecurityMapPage() {
           <button className="btn secondary" onClick={handleShare}>
             Share
           </button>
+          <DemoDataToggle
+            enabled={includeDemo}
+            onToggle={() => setIncludeDemo((prev) => !prev)}
+          />
+          <button className="btn secondary" onClick={mapTour.restart}>
+            Restart tour
+          </button>
           <button
             className="btn secondary"
             onClick={handleExportCsv}
@@ -1104,7 +1153,7 @@ export default function SecurityMapPage() {
       )}
 
       <section className="map-grid">
-        <div className="card map-panel">
+        <div className="card map-panel" data-tour="map-canvas">
           <div className="map-panel-header">
             <div>
               <h3 className="section-title">
@@ -1191,7 +1240,7 @@ export default function SecurityMapPage() {
           )}
         </div>
 
-        <aside className="card map-panel map-drilldown">
+        <aside className="card map-panel map-drilldown" data-tour="map-drilldown">
           <div className="map-panel-header">
             <div>
               <h3 className="section-title">Drilldown</h3>
@@ -1436,6 +1485,7 @@ export default function SecurityMapPage() {
                     <div className="map-drilldown-actions">
                       <button
                         className="btn secondary small"
+                        data-tour="map-view-events"
                         onClick={() =>
                           navigateTo(
                             buildEventsLink({
@@ -1466,6 +1516,12 @@ export default function SecurityMapPage() {
           )}
         </aside>
       </section>
+      <TourOverlay
+        steps={mapTourSteps}
+        isOpen={mapTour.open}
+        onComplete={mapTour.complete}
+        onDismiss={mapTour.dismiss}
+      />
     </div>
   );
 }

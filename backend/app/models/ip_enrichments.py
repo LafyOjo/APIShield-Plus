@@ -37,3 +37,4 @@ class IPEnrichment(Base):
     last_lookup_at = Column(DateTime, nullable=True)
     lookup_status = Column(String, nullable=False, default="pending")
     failure_reason = Column(String, nullable=True)
+    is_demo = Column(Boolean, nullable=False, default=False)

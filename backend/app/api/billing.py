@@ -13,6 +13,7 @@ from app.crud.subscriptions import (
     get_subscription_by_stripe_ids,
     upsert_stripe_subscription,
 )
+from app.crud.audit import create_audit_log
 from app.crud.tenants import get_tenant_by_id, get_tenant_by_slug
 from app.models.enums import RoleEnum
 from app.schemas.billing import CheckoutSessionCreate, CheckoutSessionResponse, PortalSessionResponse
@@ -117,7 +118,12 @@ def create_checkout_session(
     payload: CheckoutSessionCreate,
     request: Request,
     db: Session = Depends(get_db),
-    ctx=Depends(require_role_in_tenant([RoleEnum.ADMIN, RoleEnum.OWNER], user_resolver=get_current_user)),
+    ctx=Depends(
+        require_role_in_tenant(
+            [RoleEnum.OWNER, RoleEnum.ADMIN, RoleEnum.BILLING_ADMIN],
+            user_resolver=get_current_user,
+        )
+    ),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
     plan_key = normalize_plan_key(payload.plan_key)
@@ -162,7 +168,12 @@ def create_checkout_session(
 def create_portal_session(
     request: Request,
     db: Session = Depends(get_db),
-    ctx=Depends(require_role_in_tenant([RoleEnum.ADMIN, RoleEnum.OWNER], user_resolver=get_current_user)),
+    ctx=Depends(
+        require_role_in_tenant(
+            [RoleEnum.OWNER, RoleEnum.ADMIN, RoleEnum.BILLING_ADMIN],
+            user_resolver=get_current_user,
+        )
+    ),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
     subscription = get_latest_subscription_for_tenant(db, tenant_id)
@@ -223,6 +234,13 @@ async def stripe_webhook(
                     stripe_subscription_id=stripe_subscription_id,
                     status="active",
                 )
+                create_audit_log(
+                    db,
+                    tenant_id=tenant_id,
+                    username=None,
+                    event=f"billing.checkout.completed:{plan_key}",
+                    request=request,
+                )
 
     elif event_type in {
         "customer.subscription.created",
@@ -259,6 +277,13 @@ async def stripe_webhook(
                     current_period_end=_unix_to_datetime(data_object.get("current_period_end")),
                     cancel_at_period_end=bool(data_object.get("cancel_at_period_end")),
                 )
+                create_audit_log(
+                    db,
+                    tenant_id=tenant_id,
+                    username=None,
+                    event=f"billing.subscription.{event_type}:{plan_key}",
+                    request=request,
+                )
 
     elif event_type == "invoice.paid":
         stripe_subscription_id = data_object.get("subscription")
@@ -269,6 +294,13 @@ async def stripe_webhook(
         if subscription:
             subscription.status = "active"
             db.commit()
+            create_audit_log(
+                db,
+                tenant_id=subscription.tenant_id,
+                username=None,
+                event="billing.invoice.paid",
+                request=request,
+            )
     elif event_type == "invoice.payment_failed":
         stripe_subscription_id = data_object.get("subscription")
         subscription = get_subscription_by_stripe_ids(
@@ -278,5 +310,12 @@ async def stripe_webhook(
         if subscription:
             subscription.status = "past_due"
             db.commit()
+            create_audit_log(
+                db,
+                tenant_id=subscription.tenant_id,
+                username=None,
+                event="billing.invoice.payment_failed",
+                request=request,
+            )
 
     return {"received": True}

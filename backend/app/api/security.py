@@ -13,7 +13,7 @@ import hashlib
 import secrets
 
 from app.core.config import settings
-from app.api.dependencies import require_role, get_current_user
+from app.api.dependencies import get_current_user
 from app.core.db import get_db
 from app.core.privacy import mask_ip
 from app.core.entitlements import resolve_effective_entitlements
@@ -240,7 +240,14 @@ def _query_location_stats(db, model, tenant_id: int, from_ts: datetime | None, t
 # details. The payload is intentionally small: a single boolean
 # that the UI can turn into a neat toggle.
 @router.get("/")
-def get_security(_user=Depends(require_role("admin"))):
+def get_security(
+    _ctx=Depends(
+        require_role_in_tenant(
+            [RoleEnum.OWNER, RoleEnum.ADMIN, RoleEnum.SECURITY_ADMIN],
+            user_resolver=get_current_user,
+        )
+    )
+):
     """Return current security enforcement state."""
     return {"enabled": SECURITY_ENABLED}
 
@@ -252,7 +259,14 @@ def get_security(_user=Depends(require_role("admin"))):
 # the X-Chain-Password header. Because we rotate on every successful
 # verification, this value changes after each valid protected call.
 @router.get("/chain")
-def get_chain(_user=Depends(require_role("admin"))):
+def get_chain(
+    _ctx=Depends(
+        require_role_in_tenant(
+            [RoleEnum.OWNER, RoleEnum.ADMIN, RoleEnum.SECURITY_ADMIN],
+            user_resolver=get_current_user,
+        )
+    )
+):
     """Retrieve the current chain value."""
     return {"chain": CURRENT_CHAIN}
 
@@ -264,7 +278,15 @@ def get_chain(_user=Depends(require_role("admin"))):
 # off the next cycle. When disabling, we clear the chain so no one can
 # accidentally rely on it while protections are off.
 @router.post("/")
-def set_security(payload: dict, _user=Depends(require_role("admin"))):
+def set_security(
+    payload: dict,
+    _ctx=Depends(
+        require_role_in_tenant(
+            [RoleEnum.OWNER, RoleEnum.ADMIN, RoleEnum.SECURITY_ADMIN],
+            user_resolver=get_current_user,
+        )
+    ),
+):
     """Update security enforcement state."""
     enabled = payload.get("enabled")
     if not isinstance(enabled, bool):
@@ -337,7 +359,7 @@ def list_security_ips(
         include_raw_ip
         and geo_enabled
         and settings.ALLOW_RAW_IP_SECURITY_ENDPOINTS
-        and ctx.role in {RoleEnum.OWNER, RoleEnum.ADMIN}
+        and ctx.role in {RoleEnum.OWNER, RoleEnum.ADMIN, RoleEnum.SECURITY_ADMIN}
     )
     raw_ip_cutoff = None
     if allow_raw_ip:
@@ -461,10 +483,13 @@ def list_security_events(
     country_code: str | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
+    include_demo: bool = Query(False, alias="include_demo"),
     db=Depends(get_db),
     ctx=Depends(require_role_in_tenant([RoleEnum.VIEWER], user_resolver=get_current_user)),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
+    tenant = get_tenant_by_id(db, tenant_id)
+    include_demo = bool(include_demo and tenant and tenant.is_demo_mode)
     entitlements = resolve_effective_entitlements(db, tenant_id)
     features = entitlements.get("features", {})
     limits = entitlements.get("limits", {})
@@ -482,6 +507,8 @@ def list_security_events(
     event_time_expr = func.coalesce(SecurityEvent.event_ts, SecurityEvent.created_at)
 
     query = db.query(SecurityEvent).filter(SecurityEvent.tenant_id == tenant_id)
+    if not include_demo:
+        query = query.filter(SecurityEvent.is_demo.is_(False))
     if normalized_category:
         query = query.filter(SecurityEvent.category == normalized_category)
     if normalized_severity:

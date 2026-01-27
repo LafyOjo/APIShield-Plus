@@ -66,6 +66,7 @@ class Incident(TimestampMixin, Base):
     )
     status = Column(String, nullable=False, default="open")
     status_manual = Column(Boolean, nullable=False, default=False)
+    is_demo = Column(Boolean, nullable=False, default=False)
     category = Column(String, nullable=False)
     title = Column(String, nullable=False)
     summary = Column(String, nullable=True)

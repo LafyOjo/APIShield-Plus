@@ -33,6 +33,7 @@ from app.schemas.map import (
 )
 from app.tenancy.dependencies import require_role_in_tenant
 from app.crud.tenants import get_tenant_by_id, get_tenant_by_slug
+from app.models.tenants import Tenant
 
 
 router = APIRouter(prefix="/map", tags=["map"])
@@ -78,7 +79,7 @@ def _normalize_ts(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def _resolve_tenant_id(db: Session, tenant_hint: str) -> int:
+def _resolve_tenant(db: Session, tenant_hint: str) -> Tenant:
     if not tenant_hint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     tenant_value = tenant_hint.strip()
@@ -89,7 +90,7 @@ def _resolve_tenant_id(db: Session, tenant_hint: str) -> int:
     )
     if not tenant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    return tenant.id
+    return tenant
 
 
 def _cache_get(key: tuple) -> list[MapSummaryPoint] | None:
@@ -166,6 +167,7 @@ def _query_ip_hashes(
     lat: float | None,
     lon: float | None,
     radius_km: float | None,
+    include_demo: bool,
     limit: int = 20,
 ) -> list[MapDrilldownIpHash]:
     normalized_category = _normalize_category(category)
@@ -173,9 +175,25 @@ def _query_ip_hashes(
 
     if normalized_category == SecurityCategoryEnum.LOGIN.value:
         sources.append((Event, Event.timestamp, [Event.action.ilike("%login%")]))
+        time_col = func.coalesce(SecurityEvent.event_ts, SecurityEvent.created_at)
+        sources.append(
+            (
+                SecurityEvent,
+                time_col,
+                [SecurityEvent.category == SecurityCategoryEnum.LOGIN.value],
+            )
+        )
     elif normalized_category == SecurityCategoryEnum.THREAT.value:
         sources.append((Alert, Alert.timestamp, []))
         sources.append((Event, Event.timestamp, [Event.action.ilike("%stuffing%")]))
+        time_col = func.coalesce(SecurityEvent.event_ts, SecurityEvent.created_at)
+        sources.append(
+            (
+                SecurityEvent,
+                time_col,
+                [SecurityEvent.category == SecurityCategoryEnum.THREAT.value],
+            )
+        )
     elif normalized_category in {
         SecurityCategoryEnum.INTEGRITY.value,
         SecurityCategoryEnum.BOT.value,
@@ -210,6 +228,10 @@ def _query_ip_hashes(
                 IPEnrichment.lookup_status == "ok",
             )
         )
+        if hasattr(model, "is_demo") and not include_demo:
+            query = query.filter(model.is_demo.is_(False))
+        if hasattr(IPEnrichment, "is_demo") and not include_demo:
+            query = query.filter(IPEnrichment.is_demo.is_(False))
         if hasattr(model, "website_id") and website_id:
             query = query.filter(model.website_id == website_id)
         if hasattr(model, "environment_id") and env_id:
@@ -250,6 +272,7 @@ def _query_top_paths(
     lat: float | None,
     lon: float | None,
     radius_km: float | None,
+    include_demo: bool,
     limit: int = 10,
 ) -> list[MapDrilldownPath]:
     normalized_category = _normalize_category(category)
@@ -257,7 +280,9 @@ def _query_top_paths(
         return []
     if website_id or env_id:
         return []
-    query = (
+    path_counts: dict[str, int] = {}
+
+    alert_query = (
         db.query(Alert.request_path.label("path"), func.count().label("count"))
         .join(
             IPEnrichment,
@@ -270,26 +295,63 @@ def _query_top_paths(
             IPEnrichment.lookup_status == "ok",
         )
     )
-    query = _apply_time_filters(query, Alert.timestamp, from_ts, to_ts)
+    if hasattr(IPEnrichment, "is_demo") and not include_demo:
+        alert_query = alert_query.filter(IPEnrichment.is_demo.is_(False))
+    alert_query = _apply_time_filters(alert_query, Alert.timestamp, from_ts, to_ts)
     if bucket_start:
-        query = query.filter(
+        alert_query = alert_query.filter(
             Alert.timestamp >= bucket_start,
             Alert.timestamp < bucket_start + timedelta(hours=1),
         )
-    query = _apply_enrichment_location_filter(
-        query,
+    alert_query = _apply_enrichment_location_filter(
+        alert_query,
         country_code=country_code,
         lat=lat,
         lon=lon,
         radius_km=radius_km,
     )
-    rows = (
-        query.group_by(Alert.request_path)
-        .order_by(func.count().desc())
-        .limit(limit)
-        .all()
+    for row in alert_query.group_by(Alert.request_path).all():
+        if not row.path:
+            continue
+        path_counts[row.path] = path_counts.get(row.path, 0) + int(row.count or 0)
+
+    time_col = func.coalesce(SecurityEvent.event_ts, SecurityEvent.created_at)
+    sec_query = (
+        db.query(SecurityEvent.request_path.label("path"), func.count().label("count"))
+        .join(
+            IPEnrichment,
+            and_(SecurityEvent.tenant_id == IPEnrichment.tenant_id, SecurityEvent.ip_hash == IPEnrichment.ip_hash),
+        )
+        .filter(
+            SecurityEvent.tenant_id == tenant_id,
+            SecurityEvent.category == SecurityCategoryEnum.THREAT.value,
+            SecurityEvent.request_path.isnot(None),
+            SecurityEvent.ip_hash.isnot(None),
+            IPEnrichment.lookup_status == "ok",
+        )
     )
-    return [MapDrilldownPath(path=row.path, count=int(row.count or 0)) for row in rows if row.path]
+    if not include_demo:
+        sec_query = sec_query.filter(SecurityEvent.is_demo.is_(False), IPEnrichment.is_demo.is_(False))
+    sec_query = _apply_time_filters(sec_query, time_col, from_ts, to_ts)
+    if bucket_start:
+        sec_query = sec_query.filter(
+            time_col >= bucket_start,
+            time_col < bucket_start + timedelta(hours=1),
+        )
+    sec_query = _apply_enrichment_location_filter(
+        sec_query,
+        country_code=country_code,
+        lat=lat,
+        lon=lon,
+        radius_km=radius_km,
+    )
+    for row in sec_query.group_by(SecurityEvent.request_path).all():
+        if not row.path:
+            continue
+        path_counts[row.path] = path_counts.get(row.path, 0) + int(row.count or 0)
+
+    sorted_rows = sorted(path_counts.items(), key=lambda item: item[1], reverse=True)[:limit]
+    return [MapDrilldownPath(path=path, count=count) for path, count in sorted_rows if path]
 
 
 @router.get("/summary", response_model=MapSummaryResponse)
@@ -300,10 +362,13 @@ def map_summary(
     env_id: int | None = None,
     category: str | None = None,
     severity: str | None = None,
+    include_demo: bool = Query(False, alias="include_demo"),
     db: Session = Depends(get_db),
     ctx=Depends(require_role_in_tenant([RoleEnum.VIEWER], user_resolver=get_current_user)),
 ):
-    tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
+    tenant = _resolve_tenant(db, ctx.tenant_id)
+    tenant_id = tenant.id
+    include_demo = bool(include_demo and tenant.is_demo_mode)
     category = _normalize_category(category)
     entitlements = resolve_effective_entitlements(db, tenant_id)
     features = entitlements.get("features", {})
@@ -334,6 +399,7 @@ def map_summary(
             category,
             severity,
             geo_enabled,
+            include_demo,
         )
         cached = _cache_get(cache_key)
         if cached is not None:
@@ -358,6 +424,8 @@ def map_summary(
             )
 
         query = query.filter(GeoEventAgg.tenant_id == tenant_id)
+        if not include_demo:
+            query = query.filter(GeoEventAgg.is_demo.is_(False))
         if website_id:
             query = query.filter(GeoEventAgg.website_id == website_id)
         if env_id:
@@ -425,10 +493,13 @@ def map_drilldown(
     lat: float | None = None,
     lon: float | None = None,
     radius_km: float | None = None,
+    include_demo: bool = Query(False, alias="include_demo"),
     db: Session = Depends(get_db),
     ctx=Depends(require_role_in_tenant([RoleEnum.VIEWER], user_resolver=get_current_user)),
 ):
-    tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
+    tenant = _resolve_tenant(db, ctx.tenant_id)
+    tenant_id = tenant.id
+    include_demo = bool(include_demo and tenant.is_demo_mode)
     category = _normalize_category(category)
     entitlements = resolve_effective_entitlements(db, tenant_id)
     features = entitlements.get("features", {})
@@ -450,6 +521,8 @@ def map_drilldown(
         category=category,
     ):
         base_query = db.query(GeoEventAgg).filter(GeoEventAgg.tenant_id == tenant_id)
+        if not include_demo:
+            base_query = base_query.filter(GeoEventAgg.is_demo.is_(False))
         if website_id:
             base_query = base_query.filter(GeoEventAgg.website_id == website_id)
         if env_id:
@@ -549,6 +622,7 @@ def map_drilldown(
                 lat=lat,
                 lon=lon,
                 radius_km=radius_km,
+                include_demo=include_demo,
             )
             paths = _query_top_paths(
                 db,
@@ -563,6 +637,7 @@ def map_drilldown(
                 lat=lat,
                 lon=lon,
                 radius_km=radius_km,
+                include_demo=include_demo,
             )
 
         return MapDrilldownResponse(

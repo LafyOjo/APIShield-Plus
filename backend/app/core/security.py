@@ -17,9 +17,7 @@ from app.core.config import settings
 # Fail fast on startup if SECRET_KEY is missing so we don’t end up
 # issuing unsigned or invalid tokens by accident in production.
 if not getattr(settings, "SECRET_KEY", None):
-    raise RuntimeError(
-        # SECRET_KEY environment variable must be set for token operations
-    )
+    raise RuntimeError("SECRET_KEY environment variable must be set for token operations")
 
 # Passlib gives us a nice, battle-tested wrapper for hashing and
 # verifying passwords. Using bcrypt is a sane default and the
@@ -65,7 +63,7 @@ def create_access_token(
     )
     to_encode.update({"exp": expire})
     token = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    logging.info("Issued token for %s: %s", data.get("sub"), token)
+    logging.info("Issued token for %s", data.get("sub"))
     return token
 
 
@@ -79,7 +77,7 @@ def decode_access_token(token: str) -> dict[str, Any]:
 
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        logging.info("Decoded token: %s", token)
+        logging.info("Decoded token for %s", payload.get("sub"))
         return payload
     except JWTError:
         logging.warning("Invalid token attempted: %s", token)

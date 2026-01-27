@@ -22,6 +22,9 @@ def _resolve_tenant_id(request: Request) -> Optional[str]:
     tenant_id = request.headers.get(tenant_header) if request else None
     if tenant_id:
         return tenant_id
+    support_tenant = getattr(getattr(request, "state", None), "support_tenant_id", None)
+    if support_tenant:
+        return str(support_tenant)
     if settings.DEFAULT_TENANT_SLUG:
         return settings.DEFAULT_TENANT_SLUG
     return None
@@ -32,6 +35,11 @@ def _resolve_membership_role(db: Session, user, tenant_id: Optional[str]) -> Opt
     Resolve the caller's role from the membership table.
     """
     if user is None or tenant_id is None or db is None:
+        return None
+    if getattr(user, "support_mode", False):
+        support_tenant_id = getattr(user, "support_tenant_id", None)
+        if support_tenant_id and str(support_tenant_id) == str(tenant_id).strip():
+            return RoleEnum.VIEWER
         return None
     tenant_value = tenant_id.strip()
     tenant = (
@@ -60,6 +68,17 @@ def get_current_membership(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Tenant must be provided via header",
+        )
+    if getattr(current_user, "support_mode", False):
+        support_tenant_id = getattr(current_user, "support_tenant_id", None)
+        if not support_tenant_id or str(support_tenant_id) != str(tenant_id).strip():
+            status_code = status.HTTP_404_NOT_FOUND if settings.TENANT_STRICT_404 else status.HTTP_403_FORBIDDEN
+            raise HTTPException(status_code=status_code, detail="Tenant membership not found")
+        return Membership(
+            tenant_id=int(support_tenant_id),
+            user_id=current_user.id,
+            role=RoleEnum.VIEWER,
+            status=MembershipStatusEnum.ACTIVE,
         )
     tenant_value = tenant_id.strip()
     tenant = (
@@ -96,12 +115,16 @@ async def get_request_context(
     user_id = getattr(current_user, "id", None)
     username = getattr(current_user, "username", None)
     role = _resolve_membership_role(db, current_user, tenant_id)
+    support_mode = bool(getattr(current_user, "support_mode", False))
+    support_tenant_id = getattr(current_user, "support_tenant_id", None)
     return RequestContext(
         request_id=request_id,
         tenant_id=tenant_id,
         user_id=user_id,
         username=username,
         role=role,
+        support_mode=support_mode,
+        support_tenant_id=support_tenant_id,
     )
 
 
@@ -127,16 +150,30 @@ def require_tenant_context(*, user_resolver: Optional[Callable] = None):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Tenant must be provided via header",
             )
+        support_mode = bool(getattr(current_user, "support_mode", False))
+        support_tenant_id = getattr(current_user, "support_tenant_id", None)
         role = None
         if tenant_id is not None:
-            membership = get_current_membership(db, current_user, tenant_id)
-            role = membership.role
+            if support_mode:
+                if not support_tenant_id or str(support_tenant_id) != str(tenant_id).strip():
+                    status_code = (
+                        status.HTTP_404_NOT_FOUND
+                        if settings.TENANT_STRICT_404
+                        else status.HTTP_403_FORBIDDEN
+                    )
+                    raise HTTPException(status_code=status_code, detail="Tenant membership not found")
+                role = RoleEnum.VIEWER
+            else:
+                membership = get_current_membership(db, current_user, tenant_id)
+                role = membership.role
         return RequestContext(
             request_id=request_id,
             tenant_id=tenant_id,
             user_id=user_id,
             username=username,
             role=role,
+            support_mode=support_mode,
+            support_tenant_id=support_tenant_id,
         )
 
     return dependency
@@ -156,11 +193,15 @@ def require_roles(
             return role
         return RoleEnum(role)
 
-    role_hierarchy = {
+    base_hierarchy = {
         RoleEnum.VIEWER: 1,
         RoleEnum.ANALYST: 2,
         RoleEnum.ADMIN: 3,
         RoleEnum.OWNER: 4,
+    }
+    specialized_hierarchy = {
+        RoleEnum.SECURITY_ADMIN: 2,
+        RoleEnum.BILLING_ADMIN: 1,
     }
 
     def _role_satisfies(required_roles: set[RoleEnum], actual_role: RoleEnum | None) -> bool:
@@ -170,10 +211,21 @@ def require_roles(
             return False
         if not allow_higher_roles:
             return actual_role in required_roles
-        actual_rank = role_hierarchy.get(actual_role)
-        if actual_rank is None:
-            return False
-        return any(actual_rank >= role_hierarchy.get(required, 0) for required in required_roles)
+        if actual_role in required_roles:
+            return True
+        if actual_role in base_hierarchy:
+            actual_rank = base_hierarchy[actual_role]
+            return any(
+                required in base_hierarchy and actual_rank >= base_hierarchy[required]
+                for required in required_roles
+            )
+        if actual_role in specialized_hierarchy:
+            actual_rank = specialized_hierarchy[actual_role]
+            return any(
+                required in base_hierarchy and actual_rank >= base_hierarchy[required]
+                for required in required_roles
+            )
+        return False
 
     role_set = {_normalize_role(role) for role in roles}
 

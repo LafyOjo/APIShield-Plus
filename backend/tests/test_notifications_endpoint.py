@@ -110,8 +110,8 @@ def test_create_rule_enforces_entitlement_limits():
 
     with SessionLocal() as db:
         plan = Plan(
-            name="Starter",
-            price_monthly=10,
+            name="Pro",
+            price_monthly=249,
             limits_json={"notification_rules": 1},
             features_json={},
             is_active=True,

@@ -10,6 +10,7 @@ class MeUser(BaseModel):
     id: int
     username: str
     display_name: Optional[str] = None
+    is_platform_admin: Optional[bool] = None
 
 
 class MeTenant(BaseModel):

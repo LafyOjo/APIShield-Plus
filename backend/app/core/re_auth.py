@@ -25,6 +25,11 @@ SKIP_PATHS = {
     "/ping", "/health", "/healthz", "/metrics", "/docs", "/openapi.json",
     "/favicon.ico",
     "/login", "/register", "/api/token",
+    "/auth/oidc/status",
+    "/auth/oidc/start",
+    "/auth/oidc/callback",
+    "/auth/saml/metadata",
+    "/auth/saml/acs",
     "/score",
     "/api/audit/log",    # let audit fire without password
     "/events/auth",      # your shop auth hook

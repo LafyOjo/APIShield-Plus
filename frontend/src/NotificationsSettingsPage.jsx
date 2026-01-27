@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, ACTIVE_TENANT_KEY } from "./api";
+import { getRoleTemplate } from "./roles";
 
 const TAB_OPTIONS = [
   { value: "channels", label: "Channels" },
@@ -148,9 +149,11 @@ export default function NotificationsSettingsPage() {
 
   const [historyStatus, setHistoryStatus] = useState("");
   const [historyRange, setHistoryRange] = useState("7d");
+  const roleTemplate = useMemo(() => getRoleTemplate(activeRole), [activeRole]);
 
   const canManage = useMemo(
-    () => ["admin", "owner"].includes(String(activeRole || "").toLowerCase()),
+    () =>
+      ["owner", "admin", "security_admin"].includes(String(activeRole || "").toLowerCase()),
     [activeRole]
   );
   const advancedAlerting = Boolean(features.advanced_alerting);
@@ -320,7 +323,7 @@ export default function NotificationsSettingsPage() {
   const handleChannelSubmit = async (event) => {
     event.preventDefault();
     if (!canManage) {
-      setChannelFormError("Admin or owner role required to manage channels.");
+      setChannelFormError("Owner, admin, or security admin role required to manage channels.");
       return;
     }
     if (!channelForm.name.trim()) {
@@ -479,7 +482,7 @@ export default function NotificationsSettingsPage() {
   const handleRuleSubmit = async (event) => {
     event.preventDefault();
     if (!canManage) {
-      setRuleFormError("Admin or owner role required to manage rules.");
+      setRuleFormError("Owner, admin, or security admin role required to manage rules.");
       return;
     }
     if (!ruleForm.name.trim()) {
@@ -605,6 +608,11 @@ export default function NotificationsSettingsPage() {
           <p className="subtle">
             Configure alert channels, routing rules, and delivery history.
           </p>
+          {activeRole && (
+            <div className="help" title={roleTemplate?.description || ""}>
+              Role: {roleTemplate?.label || activeRole}
+            </div>
+          )}
         </div>
         <div className="notifications-tenant">
           <label className="label">Active tenant</label>
@@ -751,7 +759,7 @@ export default function NotificationsSettingsPage() {
               </div>
               {!canManage && (
                 <div className="locked-panel">
-                  Only admin or owner roles can manage channels.
+                  Only owner, admin, or security admin roles can manage channels.
                 </div>
               )}
               <form className="notifications-form" onSubmit={handleChannelSubmit}>
@@ -989,7 +997,7 @@ export default function NotificationsSettingsPage() {
               </div>
               {!canManage && (
                 <div className="locked-panel">
-                  Only admin or owner roles can manage rules.
+                  Only owner, admin, or security admin roles can manage rules.
                 </div>
               )}
               <form className="notifications-form" onSubmit={handleRuleSubmit}>

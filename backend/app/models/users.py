@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from app.core.db import Base
 
@@ -10,6 +10,7 @@ class User(Base):
     username = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="user")
+    is_platform_admin = Column(Boolean, nullable=False, default=False)
     policy_id = Column(Integer, ForeignKey("policies.id"), nullable=True)
 
     memberships = relationship(

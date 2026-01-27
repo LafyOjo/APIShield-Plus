@@ -48,7 +48,7 @@ def test_list_active_plans_returns_expected(db_session):
     active = list_active_plans(db_session)
     names = {plan.name for plan in active}
     assert "Legacy" not in names
-    assert {"Free", "Starter", "Pro", "Business"} <= names
+    assert {"Free", "Pro", "Business", "Enterprise"} <= names
 
 
 def test_entitlements_resolution_returns_limits_and_features(db_session):

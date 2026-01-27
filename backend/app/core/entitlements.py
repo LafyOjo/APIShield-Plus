@@ -13,6 +13,18 @@ ALLOWED_FEATURES = {
     "advanced_alerting",
     "priority_support",
     "geo_map",
+    "audit_export_ip_hash",
+    "trust_score",
+    "revenue_leaks",
+    "remediation_workspace",
+    "verification",
+    "incident_exports",
+    "data_exports",
+    "sso_oidc",
+    "sso_saml",
+    "scim",
+    "role_templates",
+    "legal_hold",
 }
 
 ALLOWED_ENTITLEMENT_SOURCES = {

@@ -76,3 +76,4 @@ class GeoEventAgg(Base):
     asn_org = Column(String, nullable=True)
     is_datacenter = Column(Boolean, nullable=True)
     count = Column(Integer, nullable=False, default=0)
+    is_demo = Column(Boolean, nullable=False, default=False)

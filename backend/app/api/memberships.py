@@ -82,9 +82,11 @@ def list_members(
     role_order = case(
         (Membership.role == RoleEnum.OWNER, 0),
         (Membership.role == RoleEnum.ADMIN, 1),
-        (Membership.role == RoleEnum.ANALYST, 2),
-        (Membership.role == RoleEnum.VIEWER, 3),
-        else_=4,
+        (Membership.role == RoleEnum.SECURITY_ADMIN, 2),
+        (Membership.role == RoleEnum.BILLING_ADMIN, 3),
+        (Membership.role == RoleEnum.ANALYST, 4),
+        (Membership.role == RoleEnum.VIEWER, 5),
+        else_=6,
     )
     rows = (
         db.query(Membership, User, UserProfile)

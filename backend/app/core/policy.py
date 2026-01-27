@@ -37,6 +37,13 @@ DEFAULT_SKIP_PATHS = (
     "/api/token",
     "/api/audit/log",         # telemetry/logging
     "/events/auth",           # your auth-event hook
+    "/auth/oidc/status",
+    "/auth/oidc/start",
+    "/auth/oidc/callback",
+    "/auth/saml/metadata",
+    "/auth/saml/acs",
+    "/api/status/components",
+    "/api/status/incidents",
     "/favicon.ico",
 )
 EXTRA_SKIP = tuple(p.strip() for p in os.getenv("POLICY_SKIP_PATHS", "").split(",") if p.strip())

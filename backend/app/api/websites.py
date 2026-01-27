@@ -11,6 +11,7 @@ from app.crud.website_environments import create_environment, list_environments
 from app.crud.websites import create_website, get_website, list_websites
 from app.models.enums import RoleEnum
 from app.schemas.website_environments import WebsiteEnvironmentCreate, WebsiteEnvironmentRead
+from app.schemas.website_stack_profiles import WebsiteStackProfileRead, WebsiteStackProfileUpdate
 from app.schemas.websites import (
     WebsiteCreate,
     WebsiteInstallEnvironment,
@@ -21,6 +22,12 @@ from app.schemas.websites import (
 )
 from app.tenancy.dependencies import get_current_membership, require_role_in_tenant
 from app.tenancy.errors import TenantNotFound
+from app.crud.website_stack_profiles import (
+    clear_stack_manual_override,
+    get_or_create_stack_profile,
+    set_stack_manual_override,
+)
+from app.stack.constants import STACK_TYPES
 
 
 router = APIRouter(tags=["websites"])
@@ -230,3 +237,90 @@ def create_environment_endpoint(
         request=request,
     )
     return environment
+
+
+@router.get("/websites/{website_id}/stack", response_model=WebsiteStackProfileRead)
+def get_stack_profile_endpoint(
+    website_id: int,
+    db=Depends(get_db),
+    current_user=Depends(get_current_user),
+    ctx=Depends(require_role_in_tenant([RoleEnum.VIEWER], user_resolver=get_current_user)),
+):
+    membership = get_current_membership(db, current_user, ctx.tenant_id)
+    try:
+        website = get_website(db, membership.tenant_id, website_id)
+    except TenantNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Website not found") from exc
+
+    profile = get_or_create_stack_profile(
+        db,
+        tenant_id=membership.tenant_id,
+        website_id=website.id,
+    )
+    return profile
+
+
+@router.patch("/websites/{website_id}/stack", response_model=WebsiteStackProfileRead)
+def update_stack_profile_endpoint(
+    website_id: int,
+    payload: WebsiteStackProfileUpdate,
+    request: Request,
+    db=Depends(get_db),
+    current_user=Depends(get_current_user),
+    ctx=Depends(require_role_in_tenant([RoleEnum.OWNER, RoleEnum.ADMIN], user_resolver=get_current_user)),
+):
+    membership = get_current_membership(db, current_user, ctx.tenant_id)
+    try:
+        website = get_website(db, membership.tenant_id, website_id)
+    except TenantNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Website not found") from exc
+
+    changes = payload.dict(exclude_unset=True)
+    if not changes:
+        profile = get_or_create_stack_profile(
+            db,
+            tenant_id=membership.tenant_id,
+            website_id=website.id,
+        )
+        return profile
+
+    if changes.get("stack_type"):
+        stack_type = changes["stack_type"]
+        if stack_type not in STACK_TYPES:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid stack type")
+        profile = set_stack_manual_override(
+            db,
+            tenant_id=membership.tenant_id,
+            website_id=website.id,
+            stack_type=stack_type,
+        )
+        create_audit_log(
+            db,
+            tenant_id=membership.tenant_id,
+            username=ctx.username,
+            event=f"website_stack_override:{website.domain}:{stack_type}",
+            request=request,
+        )
+        return profile
+
+    if changes.get("manual_override") is False:
+        profile = clear_stack_manual_override(
+            db,
+            tenant_id=membership.tenant_id,
+            website_id=website.id,
+        )
+        create_audit_log(
+            db,
+            tenant_id=membership.tenant_id,
+            username=ctx.username,
+            event=f"website_stack_override_cleared:{website.domain}",
+            request=request,
+        )
+        return profile
+
+    profile = get_or_create_stack_profile(
+        db,
+        tenant_id=membership.tenant_id,
+        website_id=website.id,
+    )
+    return profile

@@ -14,7 +14,7 @@ from app.core.entitlements import resolve_effective_entitlements
 from app.core.keys import verify_secret
 from app.core.metrics import record_ingest_event, record_ingest_latency
 from app.core.privacy import hash_ip
-from app.core.rate_limit import allow, is_banned, register_invalid_attempt
+from app.core.rate_limit import allow, is_banned, register_abuse_attempt, register_invalid_attempt
 from app.core.tracing import trace_span
 from app.crud.api_keys import get_api_key_by_public_key, mark_api_key_used
 from app.geo.enrichment import mark_ip_seen
@@ -165,8 +165,22 @@ def _apply_rate_limits(
 ) -> None:
     entitlements = resolve_effective_entitlements(db, api_key.tenant_id)
     limits = entitlements.get("limits", {}) if entitlements else {}
-    rpm_limit = _coerce_positive_int(limits.get("ingest_rpm"), settings.INGEST_DEFAULT_RPM)
-    burst_limit = _coerce_positive_int(limits.get("ingest_burst"), settings.INGEST_DEFAULT_BURST)
+    security_rpm = limits.get("ingest_security_rpm")
+    security_burst = limits.get("ingest_security_burst")
+    if security_rpm is None:
+        rpm_limit = min(
+            _coerce_positive_int(limits.get("ingest_rpm"), settings.INGEST_SECURITY_DEFAULT_RPM),
+            settings.INGEST_SECURITY_DEFAULT_RPM,
+        )
+    else:
+        rpm_limit = _coerce_positive_int(security_rpm, settings.INGEST_SECURITY_DEFAULT_RPM)
+    if security_burst is None:
+        burst_limit = min(
+            _coerce_positive_int(limits.get("ingest_burst"), settings.INGEST_SECURITY_DEFAULT_BURST),
+            settings.INGEST_SECURITY_DEFAULT_BURST,
+        )
+    else:
+        burst_limit = _coerce_positive_int(security_burst, settings.INGEST_SECURITY_DEFAULT_BURST)
 
     key_allowed, key_retry = allow(
         f"ingest:security:key:{api_key.public_key}",
@@ -179,16 +193,24 @@ def _apply_rate_limits(
     if ip_hash:
         ip_allowed, ip_retry = allow(
             f"ingest:security:ip:{ip_hash}",
-            capacity=settings.INGEST_IP_BURST,
-            refill_rate_per_sec=settings.INGEST_IP_RPM / 60.0,
+            capacity=settings.INGEST_SECURITY_IP_BURST,
+            refill_rate_per_sec=settings.INGEST_SECURITY_IP_RPM / 60.0,
         )
         if not ip_allowed:
+            ban_for = register_abuse_attempt(
+                f"iphash:{ip_hash}",
+                threshold=settings.INGEST_ABUSE_BAN_THRESHOLD,
+                ban_seconds=settings.INGEST_ABUSE_BAN_SECONDS,
+                window_seconds=settings.INGEST_ABUSE_WINDOW_SECONDS,
+            )
+            if ban_for:
+                _raise_rate_limit(ban_for, "Too many abusive requests")
             _raise_rate_limit(ip_retry, "Rate limit exceeded")
     elif client_ip:
         ip_allowed, ip_retry = allow(
             f"ingest:security:ip:{client_ip}",
-            capacity=settings.INGEST_IP_BURST,
-            refill_rate_per_sec=settings.INGEST_IP_RPM / 60.0,
+            capacity=settings.INGEST_SECURITY_IP_BURST,
+            refill_rate_per_sec=settings.INGEST_SECURITY_IP_RPM / 60.0,
         )
         if not ip_allowed:
             _raise_rate_limit(ip_retry, "Rate limit exceeded")
@@ -211,6 +233,9 @@ def _record_security_event(
             ip_hash = None
 
     if ip_hash:
+        banned, retry_after = is_banned(f"iphash:{ip_hash}")
+        if banned:
+            _raise_rate_limit(retry_after, "Too many abusive requests")
         try:
             mark_ip_seen(db, api_key.tenant_id, ip_hash)
         except Exception:

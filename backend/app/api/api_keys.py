@@ -69,6 +69,12 @@ def create_key(
         name=payload.name,
         created_by_user_id=ctx.user_id,
     )
+    create_audit_log(
+        db,
+        tenant_id=tenant_id,
+        username=ctx.username,
+        event=f"api_key_created:env:{env_id}:website:{website_id}",
+    )
     return APIKeyCreatedResponse(
         id=api_key.id,
         public_key=api_key.public_key,
@@ -112,6 +118,12 @@ def revoke_key(
         api_key = revoke_api_key(db, tenant_id, key_id, revoked_by_user_id=ctx.user_id)
     except TenantNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found") from exc
+    create_audit_log(
+        db,
+        tenant_id=tenant_id,
+        username=ctx.username,
+        event=f"api_key_revoked:{key_id}",
+    )
     return APIKeyRevokeResponse(status=api_key.status, revoked_at=api_key.revoked_at)
 
 
@@ -129,6 +141,12 @@ def rotate_key(
         api_key, raw_secret = rotate_api_key(db, tenant_id, key_id, created_by_user_id=ctx.user_id)
     except TenantNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found") from exc
+    create_audit_log(
+        db,
+        tenant_id=tenant_id,
+        username=ctx.username,
+        event=f"api_key_rotated:{key_id}",
+    )
     return APIKeyCreatedResponse(
         id=api_key.id,
         public_key=api_key.public_key,

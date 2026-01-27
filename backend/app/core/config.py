@@ -23,6 +23,10 @@ class Settings(BaseSettings):
         env_json_loads=safe_json_loads,
     )
 
+    # Environment marker used for secure defaults and startup checks.
+    # Accepted values: development, staging, production.
+    ENVIRONMENT: str = "development"
+
     # Core DB connection string, like sqlite:///./app.db or Postgres URL.
     # Needed by SQLAlchemy to connect to the persistence layer.
     DATABASE_URL: str
@@ -35,8 +39,9 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
 
     # How long issued access tokens are valid, in minutes.
-    # Default: 30 mins.
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    # Default: 15 mins.
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    SUPPORT_VIEW_TOKEN_TTL_MINUTES: int = 10
 
     # OIDC issuer and audience used to validate tokens from an IdP.
     # Defaults to demo Keycloak realm setup.
@@ -81,6 +86,25 @@ class Settings(BaseSettings):
     # Security analytics endpoints
     ALLOW_RAW_IP_SECURITY_ENDPOINTS: bool = False
 
+    # Security headers (CSP/HSTS/etc.)
+    SECURITY_HEADERS_ENABLED: bool = True
+    HSTS_MAX_AGE: int = 31536000
+    HSTS_INCLUDE_SUBDOMAINS: bool = True
+    HSTS_PRELOAD: bool = False
+    X_FRAME_OPTIONS: str = "DENY"
+    REFERRER_POLICY: str = "strict-origin-when-cross-origin"
+    CSP_DEFAULT: str = (
+        "default-src 'self'; "
+        "base-uri 'self'; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self'; "
+        "img-src 'self' data:; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "connect-src 'self'"
+    )
+
     # Ingestion rate limiting + abuse protection
     INGEST_DEFAULT_RPM: int = 120
     INGEST_DEFAULT_BURST: int = 120
@@ -90,9 +114,37 @@ class Settings(BaseSettings):
     INGEST_INVALID_BAN_THRESHOLD: int = 20
     INGEST_INVALID_WINDOW_SECONDS: int = 60
     INGEST_BAN_SECONDS: int = 600
+    INGEST_SECURITY_DEFAULT_RPM: int = 60
+    INGEST_SECURITY_DEFAULT_BURST: int = 60
+    INGEST_SECURITY_IP_RPM: int = 120
+    INGEST_SECURITY_IP_BURST: int = 120
+    INGEST_ABUSE_BAN_THRESHOLD: int = 10
+    INGEST_ABUSE_WINDOW_SECONDS: int = 60
+    INGEST_ABUSE_BAN_SECONDS: int = 900
+
+    # Data export configuration (warehouse connectors).
+    EXPORT_TARGET: str = "local"
+    EXPORT_LOCAL_DIR: str = "./exports"
+    EXPORT_DEFAULT_LOOKBACK_HOURS: int = 24
+
+    # Demo data seeding / expiry.
+    DEMO_DATA_RETENTION_DAYS: int = 7
+
+    # Multi-region readiness (data residency).
+    DEFAULT_TENANT_REGION: str = "us"
+    REGION_DB_URLS: dict = Field(default_factory=dict)
+    REGION_EXPORT_TARGETS: dict = Field(default_factory=dict)
+    PLATFORM_AUDIT_TENANT_ID: Optional[int] = None
 
     # External integration encryption (base64 Fernet key recommended).
     INTEGRATION_ENCRYPTION_KEY: Optional[str] = None
+
+    # SSO / OIDC settings.
+    SSO_STATE_TTL_SECONDS: int = 600
+    SSO_DISCOVERY_TIMEOUT_SECONDS: int = 5
+    SSO_TOKEN_TIMEOUT_SECONDS: int = 5
+    SSO_DISCOVERY_CACHE_SECONDS: int = 300
+    FRONTEND_BASE_URL: str = "http://localhost:3000"
 
     # Geo enrichment strategy and configuration.
     # GEO_PROVIDER: "local" or "api"
@@ -136,8 +188,8 @@ class Settings(BaseSettings):
     # Re-auth enforcement setting (force login per request if True).
     REAUTH_PER_REQUEST: bool = False
 
-    # Zero Trust API key placeholder for APIShield+ flows.
-    ZERO_TRUST_API_KEY: str = "demo-key"
+    # Zero Trust API key for APIShield+ flows.
+    ZERO_TRUST_API_KEY: Optional[str] = None
 
     # Where Prometheus is expected to live inside k8s cluster.
     # Metrics scrapers point here.

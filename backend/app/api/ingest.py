@@ -20,7 +20,7 @@ from app.core.metrics import record_ingest_event, record_ingest_latency
 from app.core.usage import get_or_create_current_period_usage, increment_storage
 from app.entitlements.enforcement import assert_limit
 from app.core.privacy import hash_ip
-from app.core.rate_limit import allow, is_banned, register_invalid_attempt
+from app.core.rate_limit import allow, is_banned, register_abuse_attempt, register_invalid_attempt
 from app.core.tracing import trace_span
 from app.core.usage import increment_events
 from app.core.utils.domain import normalize_domain
@@ -32,6 +32,7 @@ from app.models.anomaly_signals import AnomalySignalEvent
 from app.models.enums import WebsiteStatusEnum
 from app.models.website_environments import WebsiteEnvironment
 from app.models.websites import Website
+from app.crud.website_stack_profiles import apply_stack_detection
 from app.schemas.ingest import IngestBrowserEvent, IngestBrowserResponse
 
 
@@ -191,6 +192,10 @@ async def ingest_browser_event(
         except ValueError:
             ip_hash = None
     if ip_hash:
+        banned, retry_after = is_banned(f"iphash:{ip_hash}")
+        if banned:
+            _raise_rate_limit(retry_after, "Too many abusive requests")
+    if ip_hash:
         try:
             mark_ip_seen(db, api_key.tenant_id, ip_hash)
         except Exception:
@@ -219,6 +224,14 @@ async def ingest_browser_event(
             refill_rate_per_sec=settings.INGEST_IP_RPM / 60.0,
         )
         if not ip_allowed:
+            ban_for = register_abuse_attempt(
+                f"iphash:{ip_hash}",
+                threshold=settings.INGEST_ABUSE_BAN_THRESHOLD,
+                ban_seconds=settings.INGEST_ABUSE_BAN_SECONDS,
+                window_seconds=settings.INGEST_ABUSE_WINDOW_SECONDS,
+            )
+            if ban_for:
+                _raise_rate_limit(ban_for, "Too many abusive requests")
             _raise_rate_limit(ip_retry, "Rate limit exceeded")
 
     existing_event = get_behaviour_event_by_event_id(
@@ -338,6 +351,18 @@ async def ingest_browser_event(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to ingest event",
             )
+
+        if payload.stack_hints:
+            try:
+                apply_stack_detection(
+                    db,
+                    tenant_id=api_key.tenant_id,
+                    website_id=website.id,
+                    hints=payload.stack_hints,
+                )
+            except Exception:
+                db.rollback()
+                logger.exception("Stack detection failed")
 
         try:
             anomaly_ctx = AnomalyContext(

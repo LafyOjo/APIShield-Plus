@@ -54,8 +54,8 @@ def test_entitlements_default_equals_plan_features():
     SessionLocal = _setup_db(db_url)
     with SessionLocal() as db:
         plan = Plan(
-            name="Starter",
-            price_monthly=19,
+            name="Pro",
+            price_monthly=249,
             limits_json={"websites": 3},
             features_json={"heatmaps": True, "prescriptions": False},
         )

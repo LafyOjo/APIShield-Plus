@@ -23,12 +23,14 @@ def create_user(
     password_hash: str,
     role: str = "user",
     policy_id: int | None = None,
+    is_platform_admin: bool = False,
 ) -> User:
     user = User(
         username=username,
         password_hash=password_hash,
         role=role,
         policy_id=policy_id,
+        is_platform_admin=is_platform_admin,
     )
     db.add(user)
     db.commit()

@@ -19,6 +19,7 @@ export const AUTH_TOKEN_KEY = "apiShieldAuthToken";
 export const TOKEN_KEY = AUTH_TOKEN_KEY; // legacy alias
 export const USERNAME_KEY = "apiShieldUsername";
 export const ACTIVE_TENANT_KEY = "apiShieldActiveTenant";
+export const DEMO_DATA_KEY = "apiShieldDemoData";
 
 let FORCE_REAUTH_EVERY_CLICK = false; // global switch
 

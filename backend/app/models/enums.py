@@ -6,6 +6,8 @@ from enum import Enum
 class RoleEnum(str, Enum):
     OWNER = "owner"
     ADMIN = "admin"
+    SECURITY_ADMIN = "security_admin"
+    BILLING_ADMIN = "billing_admin"
     ANALYST = "analyst"
     VIEWER = "viewer"
 
@@ -21,3 +23,22 @@ class WebsiteStatusEnum(str, Enum):
     ACTIVE = "active"
     PAUSED = "paused"
     DELETED = "deleted"
+
+
+class StatusIncidentStatusEnum(str, Enum):
+    INVESTIGATING = "investigating"
+    IDENTIFIED = "identified"
+    MONITORING = "monitoring"
+    RESOLVED = "resolved"
+
+
+class StatusImpactEnum(str, Enum):
+    MINOR = "minor"
+    MAJOR = "major"
+    CRITICAL = "critical"
+
+
+class StatusComponentStatusEnum(str, Enum):
+    OPERATIONAL = "operational"
+    DEGRADED = "degraded"
+    OUTAGE = "outage"

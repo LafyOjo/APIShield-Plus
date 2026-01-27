@@ -1,0 +1,65 @@
+[
+  {
+    "slug": "getting-started",
+    "title": "Getting started",
+    "section": "Getting started",
+    "summary": "Quick steps to create a website, generate keys, and verify events.",
+    "file": "getting-started.md"
+  },
+  {
+    "slug": "install-agent",
+    "title": "Install the browser agent",
+    "section": "Install agent",
+    "summary": "Embed the snippet, verify events, and troubleshoot common setup issues.",
+    "file": "install-agent.md"
+  },
+  {
+    "slug": "integrations-wordpress",
+    "title": "WordPress integration",
+    "section": "Integrations",
+    "summary": "Recommended steps for WordPress installs and plugin guidance.",
+    "file": "integrations-wordpress.md"
+  },
+  {
+    "slug": "integrations-shopify",
+    "title": "Shopify integration",
+    "section": "Integrations",
+    "summary": "Paste the snippet safely into Shopify and validate installs.",
+    "file": "integrations-shopify.md"
+  },
+  {
+    "slug": "troubleshooting-events",
+    "title": "Troubleshooting: no events showing",
+    "section": "Troubleshooting",
+    "summary": "Checklist for when events or maps are empty.",
+    "file": "troubleshooting-events.md"
+  },
+  {
+    "slug": "security-best-practices",
+    "title": "Security best practices",
+    "section": "Security best practices",
+    "summary": "Recommended defaults for CSP, rate limits, and incident response.",
+    "file": "security-best-practices.md"
+  },
+  {
+    "slug": "verification-playbooks",
+    "title": "Verification playbooks",
+    "section": "Verification",
+    "summary": "How to confirm that fixes worked and document recovery.",
+    "file": "verification-playbooks.md"
+  },
+  {
+    "slug": "webhook-verification",
+    "title": "Webhook verification",
+    "section": "Webhook verification",
+    "summary": "How to verify APIShield webhook signatures.",
+    "file": "webhook-verification.md"
+  },
+  {
+    "slug": "trustscore-revenue-leaks",
+    "title": "TrustScore and Revenue Leak estimates",
+    "section": "Understanding insights",
+    "summary": "How trust signals and revenue leak estimates are calculated.",
+    "file": "trustscore-revenue-leaks.md"
+  }
+]

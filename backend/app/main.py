@@ -19,6 +19,8 @@ from app.core.policy import PolicyEngineMiddleware
 from app.core.metrics import MetricsMiddleware
 from app.tenancy.middleware import RequestContextMiddleware
 from app.core.re_auth import ReAuthMiddleware
+from app.core.security_headers import SecurityHeadersMiddleware
+from app.core.startup_checks import run_startup_checks
 from app.core.versioning import API_PREFIX, API_V1_PREFIX
 from app.entitlements.enforcement import FeatureNotEnabled, PlanLimitExceeded, RangeClampedNotice
 
@@ -39,10 +41,15 @@ from app.api.invites import router as invites_router
 from app.api.tenant_settings import router as tenant_settings_router
 from app.api.usage import router as usage_router
 from app.api.data_retention import router as data_retention_router
+from app.api.tenant_retention import router as tenant_retention_router
 from app.api.entitlements import router as entitlements_router
 from app.api.domain_verification import router as domain_verification_router
 from app.api.project_tags import router as project_tags_router
 from app.api.external_integrations import router as external_integrations_router
+from app.api.exports import router as exports_router
+from app.api.admin import router as admin_router
+from app.api.status_admin import router as status_admin_router
+from app.api.status_page import router as status_page_router
 from app.api.user_profile import router as user_profile_router
 from app.api.memberships import router as memberships_router
 from app.api.tenants import router as tenants_router
@@ -53,16 +60,38 @@ from app.api.ingest_security import router as ingest_security_router
 from app.api.analytics import router as analytics_router
 from app.api.map import router as map_router
 from app.api.incidents import router as incidents_router
+from app.api.trust import router as trust_router
+from app.api.revenue_leaks import router as revenue_leaks_router
 from app.api.prescriptions import router as prescriptions_router
-from app.api.billing import router as billing_router
 from app.api.notifications import router as notifications_router
+from app.api.sso import router as sso_router
+from app.api.oidc import router as oidc_router
+from app.api.saml import router as saml_router
+from app.api.scim_config import router as scim_config_router
+from app.api.scim import router as scim_router
+from app.api.onboarding import router as onboarding_router
+from app.api.user_tours import router as user_tours_router
+from app.api.demo import router as demo_router
+from app.api.docs import router as docs_router
+
+# Billing router depends on optional Stripe install.
+try:
+    from app.api.billing import router as billing_router
+except Exception:
+    billing_router = None
 
 # Create DB tables right away so the app doesn’t hit missing
 # schema issues later. This runs once on startup.
-Base.metadata.create_all(bind=engine)
+if os.getenv("SKIP_MIGRATIONS") != "1":
+    Base.metadata.create_all(bind=engine)
 
 # Spin up the FastAPI app. Title shows in Swagger docs.
 app = FastAPI(title="APIShield+")
+
+
+@app.on_event("startup")
+def _run_security_startup_checks() -> None:
+    run_startup_checks()
 
 
 @app.exception_handler(PlanLimitExceeded)
@@ -91,6 +120,7 @@ def handle_range_clamped(_request, exc: RangeClampedNotice):
 app.add_middleware(APILoggingMiddleware)
 app.add_middleware(MetricsMiddleware)
 app.add_middleware(AccessLogMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Security middleware stack
 # Layers are ordered: API key checks, per-request password guard,
@@ -127,10 +157,14 @@ routers = [
     tenant_settings_router,
     usage_router,
     data_retention_router,
+    tenant_retention_router,
     entitlements_router,
     domain_verification_router,
     project_tags_router,
     external_integrations_router,
+    exports_router,
+    admin_router,
+    status_admin_router,
     user_profile_router,
     memberships_router,
     tenants_router,
@@ -140,10 +174,20 @@ routers = [
     analytics_router,
     map_router,
     incidents_router,
+    trust_router,
+    revenue_leaks_router,
     prescriptions_router,
     notifications_router,
-    billing_router,
+    sso_router,
+    scim_config_router,
+    onboarding_router,
+    user_tours_router,
+    demo_router,
+    docs_router,
 ]
+
+if billing_router is not None:
+    routers.append(billing_router)
 
 for r in routers:
     api_v1.include_router(r)
@@ -151,6 +195,10 @@ for r in routers:
     api_root.include_router(r)
 
 api_v1.include_router(me_router)
+api_root.include_router(oidc_router)
+api_root.include_router(saml_router)
+api_root.include_router(scim_router)
+api_root.include_router(status_page_router)
 
 # Optional router for credential stuffing stats
 try:

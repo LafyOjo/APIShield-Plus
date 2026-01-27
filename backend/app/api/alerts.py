@@ -4,7 +4,7 @@
 # or the ORM models, while this layer just wires dependencies and shapes output.
 # That separation makes it easy to test and swap implementations later.
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
 
@@ -21,6 +21,9 @@ from app.crud.alerts import get_all_alerts
 # The Alert ORM model is used only for building SQL queries in the stats view.
 from app.schemas.alerts import AlertRead, AlertStat
 from app.api.dependencies import get_current_user
+from app.crud.tenants import get_tenant_by_id, get_tenant_by_slug
+from app.models.enums import RoleEnum
+from app.tenancy.dependencies import require_roles
 from app.models.alerts import Alert
 
 # Standard FastAPI router setup: everything here gets the /api/alerts prefix,
@@ -32,13 +35,31 @@ router = APIRouter(
     tags=["alerts"],
 )
 
+
+def _resolve_tenant_id(db: Session, tenant_hint: str) -> int:
+    if not tenant_hint:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    tenant_value = tenant_hint.strip()
+    tenant = (
+        get_tenant_by_id(db, int(tenant_value))
+        if tenant_value.isdigit()
+        else get_tenant_by_slug(db, tenant_value)
+    )
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    return tenant.id
+
 # This endpoint returns the raw list of alerts as-is from the CRUD layer.
 # It’s useful for tables or developer tools that want the full record
 # without any aggregation. We purposely keep auth/filters out here to keep
 # the example simple; real apps might page, filter, or scope by user/role.
 @router.get("/", response_model=list[AlertRead])
-def read_alerts(db: Session = Depends(get_db)):
-    return get_all_alerts(db)
+def read_alerts(
+    db: Session = Depends(get_db),
+    ctx=Depends(require_roles([RoleEnum.VIEWER], user_resolver=get_current_user)),
+):
+    tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
+    return get_all_alerts(db, tenant_id)
 
 # This endpoint powers the chart view by grouping alerts into minute buckets
 # and counting two categories: “blocked” and “invalid”. The idea is to show
@@ -47,9 +68,10 @@ def read_alerts(db: Session = Depends(get_db)):
 @router.get("/stats", response_model=list[AlertStat])
 def read_alert_stats(
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    ctx=Depends(require_roles([RoleEnum.VIEWER], user_resolver=get_current_user)),
 ):
     """Aggregate alert counts per minute."""
+    tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
 
     # Build a compact aggregation query:
     # - time bucket: we floor timestamps to the minute using strftime.
@@ -67,6 +89,7 @@ def read_alert_stats(
                 case((Alert.detail.like("Blocked:%"), 0), else_=1)
             ).label("invalid"),
         )
+        .filter(Alert.tenant_id == tenant_id)
         .group_by("time")
         .order_by("time")
         .all()

@@ -73,7 +73,32 @@ async def get_current_user(
     user = get_user_by_username(db, username)
     if not user:
         raise credentials_exception
+    if payload.get("support_mode"):
+        support_tenant_id = payload.get("support_tenant_id")
+        setattr(user, "support_mode", True)
+        setattr(user, "support_tenant_id", support_tenant_id)
+        setattr(user, "support_readonly", bool(payload.get("support_readonly", True)))
+        if request is not None:
+            setattr(request.state, "support_tenant_id", support_tenant_id)
     return user
+
+
+def require_platform_admin():
+    """
+    Dependency that enforces platform-admin access (global, not tenant-scoped).
+    """
+
+    async def dependency(current_user=Depends(get_current_user)):
+        if getattr(current_user, "support_mode", False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Support tokens cannot access admin endpoints",
+            )
+        if not getattr(current_user, "is_platform_admin", False):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+        return current_user
+
+    return dependency
 
 
 # This is a higher-order dependency that enforces role-based access.

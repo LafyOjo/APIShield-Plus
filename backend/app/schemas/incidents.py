@@ -3,6 +3,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from app.schemas.playbooks import RemediationPlaybookRead
+from app.schemas.presets import ProtectionPresetRead
 from app.schemas.prescriptions import PrescriptionItemRead
 
 
@@ -86,6 +88,8 @@ class IncidentRead(IncidentListItem):
     impact_estimate: Optional[ImpactEstimateDetail] = None
     recovery_measurement: Optional[IncidentRecoveryRead] = None
     prescription_bundle: Optional[PrescriptionBundleRead] = None
+    remediation_playbook: Optional[RemediationPlaybookRead] = None
+    protection_presets: Optional[list[ProtectionPresetRead]] = None
     map_link_params: Optional[dict] = None
     created_at: datetime
     updated_at: datetime

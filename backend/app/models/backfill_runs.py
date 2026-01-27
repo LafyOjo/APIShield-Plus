@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Column, DateTime, Index, Integer, String
+from sqlalchemy import BigInteger, Column, DateTime, Integer, String
 
 from app.core.db import Base
 from app.core.time import utcnow
@@ -7,7 +7,6 @@ from app.models.mixins import TimestampMixin
 
 class BackfillRun(TimestampMixin, Base):
     __tablename__ = "backfill_runs"
-    __table_args__ = (Index("ix_backfill_runs_job_name", "job_name"),)
 
     id = Column(
         BigInteger().with_variant(Integer, "sqlite"),

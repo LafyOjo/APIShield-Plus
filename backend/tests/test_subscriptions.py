@@ -58,7 +58,7 @@ def test_create_subscription_links_tenant_to_plan(db_session):
 
 def test_get_active_subscription_for_tenant_returns_expected(db_session):
     tenant = create_tenant(db_session, name="Umbrella")
-    plan = create_plan(db_session, name="Starter")
+    plan = create_plan(db_session, name="Pro")
     subscription = set_tenant_plan(db_session, tenant_id=tenant.id, plan_id=plan.id)
 
     found = get_active_subscription_for_tenant(db_session, tenant.id)

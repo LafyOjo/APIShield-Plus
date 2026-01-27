@@ -13,6 +13,8 @@ from app.crud.tenant_settings import get_settings
 from app.models.feature_entitlements import FeatureEntitlement
 from app.models.plans import Plan
 from app.models.tenant_settings import TenantSettings
+from app.models.tenant_retention_policies import TenantRetentionPolicy
+from app.core.retention import DATASET_RETENTION_LIMIT_KEYS
 
 
 ENTITLEMENT_CACHE_TTL_SECONDS = 180
@@ -133,6 +135,32 @@ def _apply_override_payload(
     return payload
 
 
+def _apply_dataset_retention_policies(
+    limits: dict[str, Any],
+    *,
+    policies: list[TenantRetentionPolicy] | None = None,
+) -> dict[str, Any]:
+    if not policies:
+        return limits
+    effective = dict(limits)
+    dataset_limits: dict[str, int] = dict(effective.get("dataset_retention_days") or {})
+    for policy in policies:
+        desired = _coerce_positive_int(policy.retention_days)
+        if desired is None:
+            continue
+        limit_key = DATASET_RETENTION_LIMIT_KEYS.get(policy.dataset_key)
+        max_allowed = _coerce_positive_int(effective.get(limit_key)) if limit_key else None
+        if max_allowed is None:
+            dataset_limits[policy.dataset_key] = desired
+        else:
+            dataset_limits[policy.dataset_key] = min(desired, max_allowed)
+    if dataset_limits:
+        effective["dataset_retention_days"] = dataset_limits
+        if "audit_logs" in dataset_limits:
+            effective["event_retention_days"] = dataset_limits["audit_logs"]
+    return effective
+
+
 def resolve_entitlements_for_tenant(
     db: Session,
     tenant_id: int,
@@ -170,6 +198,13 @@ def resolve_entitlements_for_tenant(
         except Exception:
             tenant_settings = None
     limits = _apply_settings_overrides(limits, tenant_settings)
+    policies = (
+        db.query(TenantRetentionPolicy)
+        .filter(TenantRetentionPolicy.tenant_id == tenant_id)
+        .order_by(TenantRetentionPolicy.dataset_key)
+        .all()
+    )
+    limits = _apply_dataset_retention_policies(limits, policies=policies)
 
     payload = {
         "features": features,

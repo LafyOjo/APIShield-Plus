@@ -5,10 +5,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.crud.data_retention import create_default_policies
+from app.crud.tenant_retention_policies import create_default_dataset_policies
 from app.crud.tenant_settings import create_default_settings
 from app.crud.feature_entitlements import seed_entitlements_from_plan
 from app.crud.plans import get_plan_by_name
 from app.core.entitlements import validate_feature
+from app.core.config import settings
 from app.core.time import utcnow
 from app.core.utils.slug import ensure_unique_slug, slugify
 from app.models.audit_logs import AuditLog
@@ -29,7 +31,15 @@ def create_tenant(
 ) -> Tenant:
     base_slug = slugify(slug or name)
     unique_slug = ensure_unique_slug(db, base_slug)
-    tenant = Tenant(name=name, slug=unique_slug, created_by_user_id=created_by_user_id)
+    default_region = settings.DEFAULT_TENANT_REGION or "us"
+    tenant = Tenant(
+        name=name,
+        slug=unique_slug,
+        created_by_user_id=created_by_user_id,
+        data_region=default_region,
+        created_region=default_region,
+        allowed_regions=[default_region],
+    )
     db.add(tenant)
     db.flush()
     default_plan = get_plan_by_name(db, "Free")
@@ -40,6 +50,7 @@ def create_tenant(
             raw_ip_retention_days = limit_value
     create_default_settings(db, tenant.id, raw_ip_retention_days=raw_ip_retention_days)
     create_default_policies(db, tenant.id)
+    create_default_dataset_policies(db, tenant.id, plan_limits=default_plan.limits_json if default_plan else None)
     seed_entitlements_from_plan(db, tenant.id, default_plan)
     try:
         db.commit()
@@ -72,6 +83,7 @@ def provision_tenant_defaults(
             raw_ip_retention_days = limit_value
     create_default_settings(db, tenant.id, raw_ip_retention_days=raw_ip_retention_days)
     create_default_policies(db, tenant.id)
+    create_default_dataset_policies(db, tenant.id, plan_limits=plan.limits_json if plan else None)
     db.add(
         Subscription(
             tenant_id=tenant.id,
@@ -124,10 +136,14 @@ def create_tenant_with_owner(
         raise ValueError("Default plan not configured.")
     base_slug = slugify(slug or name)
     unique_slug = ensure_unique_slug(db, base_slug)
+    default_region = settings.DEFAULT_TENANT_REGION or "us"
     tenant = Tenant(
         name=name,
         slug=unique_slug,
         created_by_user_id=owner_user.id,
+        data_region=default_region,
+        created_region=default_region,
+        allowed_regions=[default_region],
     )
     db.add(tenant)
     db.flush()

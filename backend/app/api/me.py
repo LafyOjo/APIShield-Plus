@@ -58,6 +58,7 @@ def read_me(
         id=current_user.id,
         username=current_user.username,
         display_name=getattr(current_user, "display_name", None),
+        is_platform_admin=getattr(current_user, "is_platform_admin", None),
     )
     active_tenant_hint = _resolve_active_tenant_header(request)
     if active_tenant_hint:

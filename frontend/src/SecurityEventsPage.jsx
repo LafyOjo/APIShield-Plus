@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, ACTIVE_TENANT_KEY } from "./api";
+import DemoDataToggle from "./DemoDataToggle";
+import { useDemoData } from "./useDemoData";
 
 const TIME_RANGES = [
   { value: "24h", label: "Last 24 hours", days: 1 },
@@ -203,6 +205,7 @@ export default function SecurityEventsPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const { enabled: includeDemo, setEnabled: setIncludeDemo } = useDemoData();
   const [debouncedFilters, setDebouncedFilters] = useState({
     activeTenant,
     websiteId,
@@ -213,6 +216,7 @@ export default function SecurityEventsPage() {
     to: toTs,
     ipHash,
     countryCode,
+    includeDemo,
   });
 
   const geoEnabled = geoFeatureEnabled !== false;
@@ -491,10 +495,11 @@ export default function SecurityEventsPage() {
         to: toTs,
         ipHash,
         countryCode,
+        includeDemo,
       });
     }, 250);
     return () => clearTimeout(handle);
-  }, [activeTenant, websiteId, envId, category, severity, fromTs, toTs, ipHash, countryCode]);
+  }, [activeTenant, websiteId, envId, category, severity, fromTs, toTs, ipHash, countryCode, includeDemo]);
 
   useEffect(() => {
     if (!isValidDate(fromTs) || !isValidDate(toTs)) return;
@@ -507,9 +512,10 @@ export default function SecurityEventsPage() {
     if (severity) params.set("severity", severity);
     if (ipHash) params.set("ip_hash", ipHash);
     if (countryCode) params.set("country_code", countryCode);
+    if (includeDemo) params.set("demo", "1");
     const nextUrl = `${window.location.pathname}?${params.toString()}${window.location.hash || ""}`;
     window.history.replaceState({}, "", nextUrl);
-  }, [fromTs, toTs, websiteId, envId, category, severity, ipHash, countryCode]);
+  }, [fromTs, toTs, websiteId, envId, category, severity, ipHash, countryCode, includeDemo]);
 
   useEffect(() => {
     if (!debouncedFilters.activeTenant) return;
@@ -530,6 +536,9 @@ export default function SecurityEventsPage() {
         if (debouncedFilters.ipHash) params.set("ip_hash", debouncedFilters.ipHash);
         if (debouncedFilters.countryCode) {
           params.set("country_code", debouncedFilters.countryCode);
+        }
+        if (debouncedFilters.includeDemo) {
+          params.set("include_demo", "true");
         }
         params.set("page_size", "100");
         const resp = await apiFetch(`/api/v1/security/events?${params.toString()}`);
@@ -661,6 +670,13 @@ export default function SecurityEventsPage() {
                 </option>
               ))}
             </select>
+          </div>
+          <div className="field">
+            <label className="label">Demo data</label>
+            <DemoDataToggle
+              enabled={includeDemo}
+              onToggle={() => setIncludeDemo((prev) => !prev)}
+            />
           </div>
         </div>
         {(ipHash || countryCode) && (

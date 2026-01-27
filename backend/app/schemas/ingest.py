@@ -14,6 +14,7 @@ from app.core.event_types import (
     normalize_path,
     normalize_url,
 )
+from app.stack.constants import STACK_HINT_KEYS
 
 
 class IngestBrowserEvent(BaseModel):
@@ -26,6 +27,7 @@ class IngestBrowserEvent(BaseModel):
     session_id: Optional[str] = None
     user_id: Optional[str] = None
     meta: Optional[dict[str, Any]] = None
+    stack_hints: Optional[dict[str, bool]] = None
 
     @validator("event_id")
     def validate_event_id(cls, value: str) -> str:
@@ -61,6 +63,22 @@ class IngestBrowserEvent(BaseModel):
     @validator("meta")
     def clamp_meta_payload(cls, value: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
         return clamp_meta(value)
+
+    @validator("stack_hints")
+    def clamp_stack_hints(cls, value: Optional[dict[str, Any]]) -> Optional[dict[str, bool]]:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ValueError("stack_hints must be a dictionary.")
+        cleaned: dict[str, bool] = {}
+        for key, raw in value.items():
+            if key not in STACK_HINT_KEYS:
+                continue
+            if isinstance(raw, bool):
+                cleaned[key] = raw
+            else:
+                cleaned[key] = bool(raw)
+        return cleaned or None
 
 
 class IngestBrowserResponse(BaseModel):

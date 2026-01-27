@@ -11,6 +11,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.core.db import get_db
+from app.api.dependencies import get_current_user
 from app.models.auth_events import AuthEvent
 
 # Router without a prefix – we explicitly mount the endpoint below
@@ -23,7 +24,10 @@ router = APIRouter()
 #   2. successful_attempts → how many of those actually worked
 # This lets the dashboard show effectiveness of defenses in real time.
 @router.get("/credential-stuffing-stats")
-def get_credential_stuffing_stats(db: Session = Depends(get_db)):
+def get_credential_stuffing_stats(
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
     """
     Returns the total and successful credential stuffing attempts for Alice and Ben.
     """

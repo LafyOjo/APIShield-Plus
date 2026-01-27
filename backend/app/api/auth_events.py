@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.api.dependencies import get_current_user
 from app.schemas.auth_events import AuthEventCreate, AuthEventOut
 from app.crud.auth_events import create_auth_event, get_auth_events
 from app.core.metrics import (
@@ -72,6 +73,9 @@ def log_auth_event(
 # Defaults to 50 records but supports limit/offset for paging.
 @router.get("/auth", response_model=List[AuthEventOut])
 def read_auth_events(
-    limit: int = 50, offset: int = 0, db: Session = Depends(get_db)
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
 ) -> List[AuthEventOut]:
     return get_auth_events(db, limit=limit, offset=offset)

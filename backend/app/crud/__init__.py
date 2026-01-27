@@ -1,4 +1,12 @@
 from .alerts import get_all_alerts
+from .tenant_sso import (
+    decrypt_client_secret,
+    encrypt_client_secret,
+    get_sso_config,
+    is_sso_required_for_user,
+    mark_sso_test_result,
+    upsert_sso_config,
+)
 from .users import get_user_by_username, create_user
 from .events import create_event, get_events
 from .behaviour_events import create_behaviour_event, get_behaviour_event_by_event_id
@@ -6,6 +14,7 @@ from .behaviour_sessions import get_behaviour_session, upsert_behaviour_session
 from .auth_events import create_auth_event, get_auth_events
 from .policies import get_policy_by_id, create_policy, get_policy_for_user
 from .audit import create_audit_log, get_audit_logs
+from .activation_metrics import get_activation_metric, upsert_activation_metric
 from .tenants import (
     create_tenant,
     create_tenant_with_owner,
@@ -74,6 +83,11 @@ from .data_retention import (
     get_policies,
     upsert_policy,
 )
+from .tenant_retention_policies import (
+    create_default_dataset_policies,
+    get_policies as get_dataset_retention_policies,
+    upsert_policy as upsert_dataset_retention_policy,
+)
 from .feature_entitlements import (
     get_entitlements,
     upsert_entitlement,
@@ -111,6 +125,12 @@ from .user_profiles import (
 
 __all__ = [
     "get_all_alerts",
+    "get_sso_config",
+    "upsert_sso_config",
+    "mark_sso_test_result",
+    "is_sso_required_for_user",
+    "encrypt_client_secret",
+    "decrypt_client_secret",
     "get_user_by_username",
     "create_user",
     "create_event",
@@ -126,6 +146,8 @@ __all__ = [
     "get_policy_for_user",
     "create_audit_log",
     "get_audit_logs",
+    "get_activation_metric",
+    "upsert_activation_metric",
     "create_tenant",
     "create_tenant_with_owner",
     "list_tenants",
@@ -178,6 +200,9 @@ __all__ = [
     "create_default_policies",
     "get_policies",
     "upsert_policy",
+    "create_default_dataset_policies",
+    "get_dataset_retention_policies",
+    "upsert_dataset_retention_policy",
     "get_entitlements",
     "upsert_entitlement",
     "seed_entitlements_from_plan",

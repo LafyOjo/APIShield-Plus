@@ -11,6 +11,7 @@ from app.models.incidents import Incident, IncidentRecovery, IncidentSecurityEve
 from app.models.prescriptions import PrescriptionBundle, PrescriptionItem
 from app.models.revenue_impact import ImpactEstimate
 from app.models.security_events import SecurityEvent
+from app.models.verification_runs import VerificationCheckRun
 
 
 GRANULARITY_LEVELS = {"country": 0, "city": 1, "asn": 2}
@@ -297,6 +298,25 @@ def assemble_incident_report(
             "time_to_recover_hours": time_to_recover_hours,
         }
 
+    verification_payload = None
+    verification = (
+        db.query(VerificationCheckRun)
+        .filter(
+            VerificationCheckRun.tenant_id == tenant_id,
+            VerificationCheckRun.incident_id == incident.id,
+        )
+        .order_by(VerificationCheckRun.created_at.desc())
+        .first()
+    )
+    if verification:
+        verification_payload = {
+            "id": verification.id,
+            "status": verification.status,
+            "created_at": verification.created_at,
+            "checks": verification.checks_json if isinstance(verification.checks_json, list) else [],
+            "notes": verification.notes,
+        }
+
     report = {
         "incident": {
             "id": incident.id,
@@ -324,6 +344,7 @@ def assemble_incident_report(
             incident_id=incident.id,
         ),
         "recovery": recovery_payload,
+        "verification": verification_payload,
         "exported_at": datetime.utcnow(),
     }
     return report
@@ -346,11 +367,20 @@ def _escape_csv(value: Any) -> str:
     return text
 
 
+def _pad_row(row: list[Any], length: int) -> list[Any]:
+    if len(row) < length:
+        row.extend([""] * (length - len(row)))
+    elif len(row) > length:
+        row = row[:length]
+    return row
+
+
 def build_incident_report_csv(report: dict[str, Any]) -> str:
     incident = report.get("incident") or {}
     impact = report.get("impact") or {}
     recovery = report.get("recovery") or {}
     prescriptions = report.get("prescriptions") or []
+    verification = report.get("verification") or {}
 
     headers = [
         "section",
@@ -382,11 +412,15 @@ def build_incident_report_csv(report: dict[str, Any]) -> str:
         "prescription_effort",
         "prescription_expected_effect",
         "prescription_notes",
+        "verification_status",
+        "verification_run_at",
+        "verification_summary",
     ]
 
     rows = []
     rows.append(
-        [
+        _pad_row(
+            [
             "incident",
             incident.get("id"),
             incident.get("title"),
@@ -415,12 +449,20 @@ def build_incident_report_csv(report: dict[str, Any]) -> str:
             "",
             "",
             "",
-        ]
+            "",
+            "",
+            "",
+            "",
+            "",
+        ],
+            len(headers),
+        )
     )
 
     if impact:
         rows.append(
-            [
+            _pad_row(
+                [
                 "impact",
                 incident.get("id"),
                 "",
@@ -449,12 +491,23 @@ def build_incident_report_csv(report: dict[str, Any]) -> str:
                 "",
                 "",
                 "",
-            ]
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ],
+                len(headers),
+            )
         )
 
     if recovery:
         rows.append(
-            [
+            _pad_row(
+                [
                 "recovery",
                 incident.get("id"),
                 "",
@@ -483,12 +536,15 @@ def build_incident_report_csv(report: dict[str, Any]) -> str:
                 "",
                 "",
                 "",
-            ]
+            ],
+                len(headers),
+            )
         )
 
     for item in prescriptions:
         rows.append(
-            [
+            _pad_row(
+                [
                 "prescription",
                 incident.get("id"),
                 "",
@@ -518,7 +574,59 @@ def build_incident_report_csv(report: dict[str, Any]) -> str:
                 item.get("effort"),
                 item.get("expected_effect"),
                 item.get("notes"),
-            ]
+                "",
+                "",
+                "",
+            ],
+                len(headers),
+            )
+        )
+
+    if verification:
+        checks = verification.get("checks") or []
+        summary = "; ".join(
+            f"{item.get('check_type')}:{item.get('status')}"
+            for item in checks
+            if isinstance(item, dict)
+        )
+        rows.append(
+            _pad_row(
+                [
+                "verification",
+                incident.get("id"),
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                verification.get("status"),
+                verification.get("created_at"),
+                summary,
+            ],
+                len(headers),
+            )
         )
 
     lines = [",".join(headers)]

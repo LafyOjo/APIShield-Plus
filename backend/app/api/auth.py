@@ -29,7 +29,9 @@ from app.core.security import revoke_token
 from app.core.db import get_db
 from app.crud.tenants import create_tenant_with_owner, get_tenant_by_id, get_tenant_by_slug
 from app.crud.users import get_user_by_username
+from app.crud.audit import create_audit_log
 from app.crud.policies import get_policy_for_user
+from app.crud.tenant_sso import is_sso_required_for_user
 from app.core.events import log_event
 from app.models.enums import MembershipStatusEnum
 from app.models.memberships import Membership
@@ -91,6 +93,16 @@ def _resolve_tenant_id_for_user(db: Session, request: Request | None, user) -> i
     if not membership:
         return None
     return tenant.id
+
+
+def _enforce_sso_required(db: Session, user: User | None, tenant_id: int | None) -> None:
+    if not user:
+        return
+    if is_sso_required_for_user(db, user_id=user.id, tenant_id=tenant_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SSO required for this tenant",
+        )
 
 
 # Creates a new user in the local DB. Also, if DEMOSHOP syncing
@@ -182,6 +194,14 @@ def login(user_in: UserCreate, request: Request, db: Session = Depends(get_db)):
     # Verify credentials
     if not user or not verify_password(user_in.password, user.password_hash):
         log_event(db, tenant_id, user_in.username, "login", False, request=request)
+        if tenant_id:
+            create_audit_log(
+                db,
+                tenant_id=tenant_id,
+                username=user_in.username,
+                event="auth.login.failure",
+                request=request,
+            )
         record_attempt(
             db,
             getattr(request.state, "client_ip", None),
@@ -197,6 +217,8 @@ def login(user_in: UserCreate, request: Request, db: Session = Depends(get_db)):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    _enforce_sso_required(db, user, tenant_id)
+
     # Success path → issue token
     membership_snapshot = _membership_snapshot(db, user.id)
     token = create_access_token(
@@ -204,6 +226,14 @@ def login(user_in: UserCreate, request: Request, db: Session = Depends(get_db)):
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
     log_event(db, tenant_id, user.username, "login", True, request=request)
+    if tenant_id:
+        create_audit_log(
+            db,
+            tenant_id=tenant_id,
+            username=user.username,
+            event="auth.login.success",
+            request=request,
+        )
     record_attempt(
         db,
         getattr(request.state, "client_ip", None),
@@ -243,30 +273,45 @@ async def login_for_access_token(
     tenant_id = _resolve_tenant_id_for_user(db, request, user)
     if not user or not verify_password(form_data.password, user.password_hash):
         log_event(db, tenant_id, form_data.username, "token", False, request=request)
+        if tenant_id:
+            create_audit_log(
+                db,
+                tenant_id=tenant_id,
+                username=form_data.username,
+                event="auth.token.failure",
+                request=request,
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    _enforce_sso_required(db, user, tenant_id)
+
     access_token = create_access_token(
         data={"sub": user.username, "memberships": _membership_snapshot(db, user.id)},
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     log_event(db, tenant_id, user.username, "token", True, request=request)
+    if tenant_id:
+        create_audit_log(
+            db,
+            tenant_id=tenant_id,
+            username=user.username,
+            event="auth.token.success",
+            request=request,
+        )
     return {"access_token": access_token, "token_type": "bearer"}
 
 
 # Returns info about the current user (from JWT).
-# NOTE: We deliberately include password_hash in the response
-# because the credential stuffing simulator relies on it.
-# In production, you’d *never* expose hashes like this.
+# Sensitive fields are intentionally excluded.
 @router.get("/api/me")
 async def read_me(current_user=Depends(get_current_user)):
     return {
         "id": current_user.id,
         "username": current_user.username,
-        "password_hash": current_user.password_hash,
         "role": current_user.role,
     }
 
@@ -291,4 +336,12 @@ async def logout(
         pass
     tenant_id = _resolve_tenant_id_for_user(db, request, current_user)
     log_event(db, tenant_id, current_user.username, "logout", success, request=request)
+    if tenant_id:
+        create_audit_log(
+            db,
+            tenant_id=tenant_id,
+            username=current_user.username,
+            event="auth.logout",
+            request=request,
+        )
     return {"detail": "Logged out"}

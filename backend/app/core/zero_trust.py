@@ -9,13 +9,15 @@ from starlette.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED
 
 from app.core.db import SessionLocal
+from app.core.config import settings
 from app.core.ip import extract_client_ip
 from app.api.score import record_attempt
 
 # Grab the configured Zero Trust API key from environment.
 # If not set, the middleware effectively runs in “open mode”
 # and won’t block anything.
-API_KEY = os.getenv("ZERO_TRUST_API_KEY")
+def _current_api_key() -> str | None:
+    return settings.ZERO_TRUST_API_KEY or os.getenv("ZERO_TRUST_API_KEY")
 
 # These are paths that can bypass the Zero Trust check entirely.
 # Think of them as “public” or “infra” endpoints where requiring
@@ -25,6 +27,11 @@ ALLOWED_PATHS = {
     "/login",
     "/register",
     "/api/token",
+    "/auth/oidc/status",
+    "/auth/oidc/start",
+    "/auth/oidc/callback",
+    "/auth/saml/metadata",
+    "/auth/saml/acs",
     "/openapi.json",
     "/docs",
     "/docs/oauth2-redirect",
@@ -33,6 +40,8 @@ ALLOWED_PATHS = {
     "/ingest/browser",
     "/api/ingest/browser",
     "/api/v1/ingest/browser",
+    "/api/status/components",
+    "/api/status/incidents",
 }
 
 
@@ -45,7 +54,8 @@ class ZeroTrustMiddleware(BaseHTTPMiddleware):
 
         # Step 2: If API_KEY isn’t set, we treat it as “disabled”.
         # That way local/dev environments can run without hassle.
-        if not API_KEY:
+        api_key = _current_api_key()
+        if not api_key:
             return await call_next(request)
 
         # Step 3: Allow public paths to bypass API key enforcement.
@@ -57,7 +67,7 @@ class ZeroTrustMiddleware(BaseHTTPMiddleware):
         # header. If it’s wrong or missing, log the incident and
         # return 401 Unauthorized to the caller.
         header = request.headers.get("X-API-Key")
-        if header != API_KEY:
+        if header != api_key:
             client_ip = getattr(request.state, "client_ip", None) or extract_client_ip(request)
             with SessionLocal() as db:
                 record_attempt(db, client_ip, False, detail="Invalid API key", request=request)

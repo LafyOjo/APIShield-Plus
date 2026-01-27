@@ -60,6 +60,7 @@ class BehaviourSession(Base):
     longitude = Column(Float, nullable=True)
     asn = Column(String, nullable=True)
     is_datacenter = Column(Boolean, nullable=True)
+    is_demo = Column(Boolean, nullable=False, default=False)
 
     tenant = relationship("Tenant", back_populates="behaviour_sessions", lazy="noload")
     website = relationship("Website", back_populates="behaviour_sessions", lazy="noload")

@@ -23,9 +23,9 @@ def _auth_headers():
     return {'Authorization': f'Bearer {token}'}
 
 
-def test_me_returns_password_hash_and_username():
+def test_me_excludes_password_hash():
     resp = client.get('/api/me', headers=_auth_headers())
     assert resp.status_code == 200
     data = resp.json()
     assert data['username'] == 'alice'
-    assert 'password_hash' in data and data['password_hash']
+    assert 'password_hash' not in data

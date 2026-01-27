@@ -8,7 +8,7 @@
 */
 
 import { useState, useEffect } from "react";
-import { AUTH_TOKEN_KEY, USERNAME_KEY, logAuditEvent } from "./api";
+import { ACTIVE_TENANT_KEY, AUTH_TOKEN_KEY, USERNAME_KEY, logAuditEvent } from "./api";
 import ScoreForm from "./ScoreForm";
 import AlertsTable from "./AlertsTable";
 import EventsTable from "./EventsTable";
@@ -22,8 +22,19 @@ import SecurityMapPage from "./SecurityMapPage";
 import SecurityEventsPage from "./SecurityEventsPage";
 import RevenueIntegrityIncidentsPage from "./RevenueIntegrityIncidentsPage";
 import RevenueIntegrityIncidentDetailPage from "./RevenueIntegrityIncidentDetailPage";
+import RemediationWorkspacePage from "./RemediationWorkspacePage";
+import RevenueLeakHeatmapPage from "./RevenueLeakHeatmapPage";
+import WebsiteSettingsPage from "./WebsiteSettingsPage";
+import OnboardingWizardPage from "./OnboardingWizardPage";
 import NotificationsSettingsPage from "./NotificationsSettingsPage";
 import BillingPage from "./BillingPage";
+import ComplianceAuditPage from "./ComplianceAuditPage";
+import ComplianceRetentionPage from "./ComplianceRetentionPage";
+import AdminConsolePage from "./AdminConsolePage";
+import AdminStatusPage from "./AdminStatusPage";
+import AdminActivationPage from "./AdminActivationPage";
+import StatusPage from "./StatusPage";
+import DocsHubPage from "./DocsHubPage";
 import "./App.css";
 
 /*
@@ -49,6 +60,26 @@ function App() {
   # to the login screen automatically.
   */
   const [token, setToken] = useState(localStorage.getItem(AUTH_TOKEN_KEY));
+
+  useEffect(() => {
+    const hashParams = new URLSearchParams(
+      window.location.hash ? window.location.hash.slice(1) : ""
+    );
+    const tokenParam = hashParams.get("sso_token");
+    if (!tokenParam) {
+      return;
+    }
+    const userParam = hashParams.get("sso_user");
+    const tenantParam = hashParams.get("tenant");
+    localStorage.setItem(AUTH_TOKEN_KEY, tokenParam);
+    if (userParam) localStorage.setItem(USERNAME_KEY, userParam);
+    if (tenantParam) localStorage.setItem(ACTIVE_TENANT_KEY, tenantParam);
+    setToken(tokenParam);
+    const cleanPath = window.location.pathname === "/sso/callback"
+      ? "/"
+      : window.location.pathname;
+    window.history.replaceState({}, "", cleanPath);
+  }, []);
 
   /*
   # selectedUser is used by the AttackSim widget.
@@ -141,13 +172,42 @@ function App() {
     currentRoute.startsWith("/security/events");
   const isNotificationsRoute = currentRoute.startsWith("/dashboard/settings/notifications");
   const isBillingRoute = currentRoute.startsWith("/billing");
-  const revenuePrefix = "/dashboard/revenue-integrity/incidents";
+  const isComplianceRoute =
+    currentRoute.startsWith("/dashboard/compliance/audit") ||
+    currentRoute.startsWith("/compliance/audit") ||
+    currentRoute.startsWith("/dashboard/compliance/retention") ||
+    currentRoute.startsWith("/compliance/retention");
+  const websiteSettingsMatch = currentRoute.match(
+    /^\/dashboard\/websites\/(\d+)\/settings/
+  );
+  const isWebsiteSettingsRoute = currentRoute.startsWith("/dashboard/websites");
+  const websiteSettingsId = websiteSettingsMatch ? websiteSettingsMatch[1] : null;
+  const isComplianceRetentionRoute =
+    currentRoute.startsWith("/dashboard/compliance/retention") ||
+    currentRoute.startsWith("/compliance/retention");
+  const isOnboardingRoute =
+    currentRoute.startsWith("/dashboard/onboarding") ||
+    currentRoute.startsWith("/onboarding");
+  const isAdminRoute =
+    currentRoute.startsWith("/admin");
+  const isAdminStatusRoute = currentRoute.startsWith("/admin/status");
+  const isAdminActivationRoute = currentRoute.startsWith("/admin/activation");
+  const isStatusRoute = currentRoute.startsWith("/status");
+  const isHelpRoute =
+    currentRoute.startsWith("/dashboard/help") ||
+    currentRoute.startsWith("/help");
+  const revenuePrefix = "/dashboard/revenue-integrity";
+  const leaksPrefix = "/dashboard/revenue-integrity/leaks";
   const incidentDetailMatch = currentRoute.match(
     /^\/dashboard\/revenue-integrity\/incidents\/(\d+)/
   );
+  const remediationMatch = currentRoute.match(/^\/dashboard\/remediation\/(\d+)/);
   const isRevenueRoute = currentRoute.startsWith(revenuePrefix);
   const isIncidentDetailRoute = Boolean(incidentDetailMatch);
   const incidentId = incidentDetailMatch ? incidentDetailMatch[1] : null;
+  const isRemediationRoute = Boolean(remediationMatch);
+  const remediationIncidentId = remediationMatch ? remediationMatch[1] : null;
+  const isLeaksRoute = currentRoute.startsWith(leaksPrefix);
 
   /*
   # If no token: show login screen instead of the dashboard.
@@ -155,6 +215,10 @@ function App() {
   # the LoginForm component. Once LoginForm calls onLogin,
   # we’ll setToken and the main dashboard will render.
   */
+  if (isStatusRoute) {
+    return <StatusPage />;
+  }
+
   if (!token) {
     return (
       <div className="app-container stack">
@@ -189,7 +253,8 @@ function App() {
           <button
             className={`btn secondary nav-tab ${
               !isMapRoute && !isEventsRoute && !isRevenueRoute && !isNotificationsRoute
-                && !isBillingRoute
+                && !isBillingRoute && !isComplianceRoute && !isAdminRoute && !isWebsiteSettingsRoute
+                && !isOnboardingRoute && !isHelpRoute
                 ? "active"
                 : ""
             }`}
@@ -216,6 +281,52 @@ function App() {
             Revenue Integrity
           </button>
           <button
+            className={`btn secondary nav-tab ${isWebsiteSettingsRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/websites")}
+          >
+            Websites
+          </button>
+          <button
+            className={`btn secondary nav-tab ${isOnboardingRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/onboarding")}
+          >
+            Onboarding
+          </button>
+          <button
+            className={`btn secondary nav-tab ${isHelpRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/help")}
+          >
+            Help
+          </button>
+          <button
+            className={`btn secondary nav-tab ${isComplianceRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/compliance/audit")}
+          >
+            Compliance
+          </button>
+          <button
+            className={`btn secondary nav-tab ${isAdminRoute && !isAdminStatusRoute ? "active" : ""}`}
+            onClick={() => navigate("/admin")}
+          >
+            Admin
+          </button>
+          {isAdminRoute && (
+            <button
+              className={`btn secondary nav-tab ${isAdminStatusRoute ? "active" : ""}`}
+              onClick={() => navigate("/admin/status")}
+            >
+              Status Ops
+            </button>
+          )}
+          {isAdminRoute && (
+            <button
+              className={`btn secondary nav-tab ${isAdminActivationRoute ? "active" : ""}`}
+              onClick={() => navigate("/admin/activation")}
+            >
+              Activation
+            </button>
+          )}
+          <button
             className={`btn secondary nav-tab ${isNotificationsRoute ? "active" : ""}`}
             onClick={() => navigate("/dashboard/settings/notifications")}
           >
@@ -230,8 +341,18 @@ function App() {
         </div>
       </header>
 
-      {isIncidentDetailRoute ? (
+      {isRemediationRoute ? (
+        <RemediationWorkspacePage incidentId={remediationIncidentId} />
+      ) : isOnboardingRoute ? (
+        <OnboardingWizardPage />
+      ) : isHelpRoute ? (
+        <DocsHubPage />
+      ) : isIncidentDetailRoute ? (
         <RevenueIntegrityIncidentDetailPage incidentId={incidentId} />
+      ) : isWebsiteSettingsRoute ? (
+        <WebsiteSettingsPage websiteId={websiteSettingsId} />
+      ) : isLeaksRoute ? (
+        <RevenueLeakHeatmapPage />
       ) : isRevenueRoute ? (
         <RevenueIntegrityIncidentsPage />
       ) : isMapRoute ? (
@@ -240,6 +361,10 @@ function App() {
         <SecurityEventsPage />
       ) : isNotificationsRoute ? (
         <NotificationsSettingsPage />
+      ) : isComplianceRoute ? (
+        isComplianceRetentionRoute ? <ComplianceRetentionPage /> : <ComplianceAuditPage />
+      ) : isAdminRoute ? (
+        isAdminStatusRoute ? <AdminStatusPage /> : isAdminActivationRoute ? <AdminActivationPage /> : <AdminConsolePage />
       ) : isBillingRoute ? (
         <BillingPage />
       ) : (

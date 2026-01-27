@@ -18,3 +18,5 @@ class RequestContext:
     user_id: Optional[int]
     username: Optional[str]
     role: Optional[RoleEnum]
+    support_mode: bool = False
+    support_tenant_id: Optional[str] = None

@@ -13,6 +13,7 @@ const DEFAULT_FLUSH_INTERVAL_MS = 3000;
 const DEFAULT_FLUSH_MAX_EVENTS = 20;
 const DEFAULT_SCROLL_STEP = 10;
 const DEFAULT_SCROLL_THROTTLE_MS = 1000;
+const DEFAULT_INCLUDE_STACK_HINTS = true;
 
 const META_ALLOWLIST = {
   [EVENT_TYPES.CLICK]: ["tag", "id", "classes"],
@@ -113,6 +114,74 @@ function resolveIngestUrl(explicitUrl) {
   return buildUrl || "/api/v1/ingest/browser";
 }
 
+function detectStackHints() {
+  if (!isBrowser()) {
+    return null;
+  }
+  const hints = {
+    nextjs_detected: false,
+    shopify_detected: false,
+    wordpress_detected: false,
+    react_spa_detected: false,
+    laravel_detected: false,
+    django_detected: false,
+    rails_detected: false,
+    custom_detected: false,
+  };
+
+  try {
+    if (window.__NEXT_DATA__ || document.getElementById("__NEXT_DATA__")) {
+      hints.nextjs_detected = true;
+    }
+  } catch (_err) {
+    // ignore
+  }
+
+  try {
+    const generator = document.querySelector("meta[name='generator']");
+    const content = generator && generator.content ? generator.content.toLowerCase() : "";
+    if (content.includes("wordpress")) {
+      hints.wordpress_detected = true;
+    }
+    if (content.includes("shopify")) {
+      hints.shopify_detected = true;
+    }
+  } catch (_err) {
+    // ignore
+  }
+
+  try {
+    if (window.Shopify) {
+      hints.shopify_detected = true;
+    }
+  } catch (_err) {
+    // ignore
+  }
+
+  try {
+    const wpAsset = document.querySelector("script[src*='wp-content'],link[href*='wp-content']");
+    if (wpAsset) {
+      hints.wordpress_detected = true;
+    }
+  } catch (_err) {
+    // ignore
+  }
+
+  try {
+    if (document.getElementById("root") || document.getElementById("app")) {
+      hints.react_spa_detected = true;
+    }
+  } catch (_err) {
+    // ignore
+  }
+
+  const hasSignal = Object.values(hints).some(Boolean);
+  if (!hasSignal) {
+    hints.custom_detected = true;
+  }
+  return hints;
+}
+
 function normalizeUrl(rawUrl, dropQuery) {
   try {
     const url = new URL(rawUrl, window.location.href);
@@ -205,6 +274,7 @@ function createAgent(userConfig = {}) {
     maxMetaBytes: DEFAULT_MAX_META_BYTES,
     dropUrlQuery: true,
     allowBatch: true,
+    includeStackHints: DEFAULT_INCLUDE_STACK_HINTS,
     metaAllowlist: META_ALLOWLIST,
     ...userConfig,
   };
@@ -220,6 +290,7 @@ function createAgent(userConfig = {}) {
     lastScrollSentAt: 0,
     lastScrollPercent: 0,
     active: false,
+    stackHints: config.includeStackHints ? detectStackHints() : null,
   };
 
   function buildEvent(type, meta, referrerOverride) {
@@ -238,7 +309,7 @@ function createAgent(userConfig = {}) {
       config.metaAllowlist,
       config.maxMetaBytes,
     );
-    return {
+    const payload = {
       event_id: uuidv4(),
       ts: nowIso(),
       type,
@@ -248,6 +319,14 @@ function createAgent(userConfig = {}) {
       session_id: getOrCreateSessionId(),
       meta: sanitizedMeta,
     };
+    if (
+      config.includeStackHints &&
+      type === EVENT_TYPES.PAGE_VIEW &&
+      state.stackHints
+    ) {
+      payload.stack_hints = state.stackHints;
+    }
+    return payload;
   }
 
   function enqueueEvent(event) {

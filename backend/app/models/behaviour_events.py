@@ -11,6 +11,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     JSON,
+    Boolean,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -89,6 +90,7 @@ class BehaviourEvent(Base):
     ip_hash = Column(String, nullable=True)
     user_agent = Column(Text, nullable=True)
     meta = Column(JSON_TYPE, nullable=True)
+    is_demo = Column(Boolean, nullable=False, default=False)
 
     tenant = relationship("Tenant", back_populates="behaviour_events", lazy="noload")
     website = relationship("Website", back_populates="behaviour_events", lazy="noload")

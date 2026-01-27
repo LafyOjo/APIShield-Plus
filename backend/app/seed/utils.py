@@ -3,7 +3,9 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.core.keys import hash_secret
+from app.core.config import settings
 from app.core.security import get_password_hash
+from app.billing.catalog import get_plan_tiers
 from app.core.utils.domain import normalize_domain
 from app.crud.users import create_user, get_user_by_username
 from app.crud.memberships import create_membership
@@ -21,7 +23,14 @@ def get_or_create_tenant(db: Session, slug: str, name: str) -> Tenant:
     tenant = db.query(Tenant).filter(Tenant.slug == slug).first()
     if tenant:
         return tenant
-    tenant = Tenant(slug=slug, name=name)
+    default_region = settings.DEFAULT_TENANT_REGION or "us"
+    tenant = Tenant(
+        slug=slug,
+        name=name,
+        data_region=default_region,
+        created_region=default_region,
+        allowed_regions=[default_region],
+    )
     db.add(tenant)
     db.commit()
     db.refresh(tenant)
@@ -157,107 +166,16 @@ def get_or_create_plan(
 
 
 def seed_default_plans(db: Session) -> list[Plan]:
-    defaults = [
-        {
-            "name": "Free",
-            "price_monthly": 0,
-            "limits_json": {
-                "websites": 1,
-                "events_per_month": 50000,
-                "retention_days": 7,
-                "geo_history_days": 1,
-                "raw_ip_retention_days": 1,
-                "notification_channels": 1,
-                "notification_rules": 1,
-                "ingest_rpm": 120,
-                "ingest_burst": 120,
-            },
-            "features_json": {
-                "heatmaps": False,
-                "integrity_monitoring": True,
-                "prescriptions": False,
-                "advanced_alerting": False,
-                "geo_map": False,
-            },
-        },
-        {
-            "name": "Starter",
-            "price_monthly": 49,
-            "limits_json": {
-                "websites": 3,
-                "events_per_month": 250000,
-                "retention_days": 30,
-                "geo_history_days": 7,
-                "raw_ip_retention_days": 7,
-                "notification_channels": 2,
-                "notification_rules": 2,
-                "ingest_rpm": 500,
-                "ingest_burst": 500,
-            },
-            "features_json": {
-                "heatmaps": True,
-                "integrity_monitoring": True,
-                "prescriptions": False,
-                "advanced_alerting": False,
-                "geo_map": False,
-            },
-        },
-        {
-            "name": "Pro",
-            "price_monthly": 149,
-            "limits_json": {
-                "websites": 10,
-                "events_per_month": 1000000,
-                "retention_days": 90,
-                "geo_history_days": 30,
-                "raw_ip_retention_days": 30,
-                "notification_channels": 10,
-                "notification_rules": 10,
-                "ingest_rpm": 2000,
-                "ingest_burst": 2000,
-            },
-            "features_json": {
-                "heatmaps": True,
-                "integrity_monitoring": True,
-                "prescriptions": True,
-                "advanced_alerting": True,
-                "geo_map": True,
-            },
-        },
-        {
-            "name": "Business",
-            "price_monthly": 399,
-            "limits_json": {
-                "websites": 25,
-                "events_per_month": 5000000,
-                "retention_days": 180,
-                "geo_history_days": 90,
-                "raw_ip_retention_days": 90,
-                "notification_channels": 25,
-                "notification_rules": 25,
-                "ingest_rpm": 5000,
-                "ingest_burst": 5000,
-            },
-            "features_json": {
-                "heatmaps": True,
-                "integrity_monitoring": True,
-                "prescriptions": True,
-                "advanced_alerting": True,
-                "priority_support": True,
-                "geo_map": True,
-            },
-        },
-    ]
-
+    tiers = get_plan_tiers()
     seeded: list[Plan] = []
-    for plan in defaults:
+    for plan in tiers.values():
         seeded.append(
             get_or_create_plan(
                 db,
-                name=plan["name"],
+                name=plan["plan_name"],
                 price_monthly=plan["price_monthly"],
-                limits_json=plan["limits_json"],
-                features_json=plan["features_json"],
+                limits_json=plan["limits"],
+                features_json=plan["features"],
                 is_active=True,
             )
         )

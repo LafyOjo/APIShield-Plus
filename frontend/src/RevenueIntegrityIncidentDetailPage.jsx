@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiFetch } from "./api";
+import { apiFetch, ACTIVE_TENANT_KEY } from "./api";
+import { useDemoData } from "./useDemoData";
+import TourOverlay from "./TourOverlay";
+import { useTour } from "./useTour";
 
 const STATUS_OPTIONS = [
   { value: "open", label: "Open" },
@@ -78,6 +81,7 @@ const getIncidentIdFromPath = (path) => {
 export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
   const resolvedIncidentId =
     incidentId || getIncidentIdFromPath(window.location.pathname);
+  const activeTenant = localStorage.getItem(ACTIVE_TENANT_KEY) || "";
   const [incident, setIncident] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -90,6 +94,34 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
   const [saving, setSaving] = useState(false);
   const [itemStates, setItemStates] = useState({});
   const [memberMap, setMemberMap] = useState({});
+  const [activeTab, setActiveTab] = useState("prescriptions");
+  const [copyStatus, setCopyStatus] = useState("");
+  const [verificationRuns, setVerificationRuns] = useState([]);
+  const [verificationMessage, setVerificationMessage] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const incidentTour = useTour("incidents", activeTenant);
+  const { enabled: includeDemo } = useDemoData();
+
+  const incidentTourSteps = useMemo(
+    () => [
+      {
+        selector: '[data-tour="incident-impact"]',
+        title: "Impact overview",
+        body: "See conversion loss and confidence for this incident window.",
+      },
+      {
+        selector: '[data-tour="incident-prescriptions"]',
+        title: "Prescriptions & playbooks",
+        body: "Review suggested fixes or stack-specific playbooks to resolve fast.",
+      },
+      {
+        selector: '[data-tour="incident-map-link"]',
+        title: "Trace origin on the map",
+        body: "Jump into the geo map with filters pre-applied for this incident.",
+      },
+    ],
+    []
+  );
 
   const navigateTo = useCallback((path) => {
     if (!path) return;
@@ -180,7 +212,8 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
       setLoading(true);
       setError("");
       try {
-        const resp = await apiFetch(`/api/v1/incidents/${resolvedIncidentId}`);
+        const params = includeDemo ? "?include_demo=true" : "";
+        const resp = await apiFetch(`/api/v1/incidents/${resolvedIncidentId}${params}`);
         if (!resp.ok) {
           throw new Error("Unable to load incident");
         }
@@ -201,7 +234,51 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
     return () => {
       mounted = false;
     };
-  }, [resolvedIncidentId]);
+  }, [resolvedIncidentId, includeDemo]);
+
+  useEffect(() => {
+    if (!resolvedIncidentId) return;
+    let mounted = true;
+    async function loadVerificationRuns() {
+      try {
+        const params = includeDemo ? "?include_demo=true" : "";
+        const resp = await apiFetch(
+          `/api/v1/incidents/${resolvedIncidentId}/verification${params}`,
+          { skipReauth: true }
+        );
+        if (!resp.ok) {
+          throw new Error("Unable to load verification runs");
+        }
+        const data = await resp.json();
+        if (!mounted) return;
+        setVerificationRuns(Array.isArray(data) ? data : []);
+      } catch (err) {
+        if (!mounted) return;
+        setVerificationRuns([]);
+      }
+    }
+    loadVerificationRuns();
+    return () => {
+      mounted = false;
+    };
+  }, [resolvedIncidentId, includeDemo]);
+
+  useEffect(() => {
+    if (!incident) return;
+    const hasPrescriptions =
+      Array.isArray(incident?.prescription_bundle?.items) &&
+      incident.prescription_bundle.items.length > 0;
+    const hasPlaybook =
+      Array.isArray(incident?.remediation_playbook?.sections) &&
+      incident.remediation_playbook.sections.length > 0;
+    const hasPresets =
+      Array.isArray(incident?.protection_presets) && incident.protection_presets.length > 0;
+    if (!hasPrescriptions && hasPlaybook) {
+      setActiveTab("playbook");
+    } else if (!hasPrescriptions && !hasPlaybook && hasPresets) {
+      setActiveTab("presets");
+    }
+  }, [incident]);
 
   useEffect(() => {
     if (!incident?.prescription_bundle?.items) return;
@@ -211,7 +288,7 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
         status: item.status || "suggested",
         notes: item.notes || "",
         snoozed_until: item.snoozed_until
-          - new Date(item.snoozed_until).toISOString().slice(0, 16)
+          ? new Date(item.snoozed_until).toISOString().slice(0, 16)
           : "",
         saving: false,
         message: "",
@@ -229,7 +306,8 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
         status: statusValue,
         notes,
       };
-      const resp = await apiFetch(`/api/v1/incidents/${incident.id}`, {
+      const params = includeDemo ? "?include_demo=true" : "";
+      const resp = await apiFetch(`/api/v1/incidents/${incident.id}${params}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -249,14 +327,18 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
     }
   };
 
-  const mapLink = useMemo(
-    () => buildLink("/dashboard/security/map", incident?.map_link_params),
-    [incident]
-  );
-  const eventsLink = useMemo(
-    () => buildLink("/dashboard/security/events", incident?.map_link_params),
-    [incident]
-  );
+  const mapLink = useMemo(() => {
+    if (!incident?.map_link_params) return "/dashboard/security/map";
+    const params = { ...incident.map_link_params };
+    if (includeDemo) params.demo = "1";
+    return buildLink("/dashboard/security/map", params);
+  }, [incident, includeDemo]);
+  const eventsLink = useMemo(() => {
+    if (!incident?.map_link_params) return "/dashboard/security/events";
+    const params = { ...incident.map_link_params };
+    if (includeDemo) params.demo = "1";
+    return buildLink("/dashboard/security/events", params);
+  }, [incident, includeDemo]);
 
   const evidence = incident?.evidence_summary || incident?.evidence_json || {};
   const topPaths = extractEvidenceList(evidence, "request_paths");
@@ -265,6 +347,13 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
   const impact = incident?.impact_estimate || null;
   const recovery = incident?.recovery_measurement || null;
   const prescriptions = incident?.prescription_bundle?.items || [];
+  const presets = incident?.protection_presets || [];
+  const playbook = incident?.remediation_playbook || null;
+  const playbookSections = Array.isArray(playbook?.sections)
+    ? playbook.sections
+    : Array.isArray(playbook?.sections_json)
+      ? playbook.sections_json
+      : [];
 
   const groupedPrescriptions = useMemo(() => {
     const groups = {};
@@ -368,9 +457,9 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
 
   const handleItemSave = async (item, overrides = {}) => {
     const current = itemStates[item.id] || {};
-    const nextStatus = overrides.status -- current.status -- item.status -- "suggested";
-    const nextNotes = overrides.notes -- current.notes -- "";
-    const nextSnooze = overrides.snoozed_until -- current.snoozed_until -- "";
+    const nextStatus = overrides.status ?? current.status ?? item.status ?? "suggested";
+    const nextNotes = overrides.notes ?? current.notes ?? "";
+    const nextSnooze = overrides.snoozed_until ?? current.snoozed_until ?? "";
     updateItemState(item.id, {
       status: nextStatus,
       notes: nextNotes,
@@ -412,7 +501,7 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
         status: updated.status || nextStatus,
         notes: updated.notes || "",
         snoozed_until: updated.snoozed_until
-          - new Date(updated.snoozed_until).toISOString().slice(0, 16)
+          ? new Date(updated.snoozed_until).toISOString().slice(0, 16)
           : "",
         saving: false,
         message: "Updated.",
@@ -425,6 +514,47 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
   const handleQuickApply = (item) => {
     if (!canManagePrescriptions) return;
     handleItemSave(item, { status: "applied", snoozed_until: "" });
+  };
+
+  const handleCopy = async (value) => {
+    if (!value) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(value);
+        setCopyStatus("Copied to clipboard.");
+      } else {
+        window.prompt("Copy this preset:", value);
+        setCopyStatus("Ready to copy.");
+      }
+    } catch (err) {
+      setCopyStatus("Unable to copy preset.");
+    } finally {
+      setTimeout(() => setCopyStatus(""), 2500);
+    }
+  };
+
+  const handleRunVerification = async () => {
+    if (!incident) return;
+    setVerifying(true);
+    setVerificationMessage("");
+    try {
+      const params = includeDemo ? "?include_demo=true" : "";
+      const resp = await apiFetch(`/api/v1/incidents/${incident.id}/verification${params}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!resp.ok) {
+        throw new Error("Verification run failed");
+      }
+      const data = await resp.json();
+      setVerificationRuns((prev) => [data, ...(Array.isArray(prev) ? prev : [])]);
+      setVerificationMessage("Verification run completed.");
+    } catch (err) {
+      setVerificationMessage(err.message || "Unable to run verification.");
+    } finally {
+      setVerifying(false);
+      setTimeout(() => setVerificationMessage(""), 2500);
+    }
   };
 
   if (!resolvedIncidentId) {
@@ -461,10 +591,23 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
         <div className="incident-actions">
           <button
             className="btn secondary"
+            data-tour="incident-map-link"
             onClick={() => navigateTo(mapLink)}
             disabled={!incident?.map_link_params}
           >
             View on Map
+          </button>
+          <button
+            className="btn secondary"
+            onClick={() =>
+              navigateTo(
+                includeDemo
+                  ? `/dashboard/remediation/${resolvedIncidentId}?demo=1`
+                  : `/dashboard/remediation/${resolvedIncidentId}`
+              )
+            }
+          >
+            Remediation workspace
           </button>
           <button
             className="btn secondary"
@@ -475,6 +618,9 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
           </button>
           <button className="btn secondary" disabled title="Report export coming soon.">
             Export incident report
+          </button>
+          <button className="btn secondary" onClick={incidentTour.restart}>
+            Start tour
           </button>
         </div>
       </section>
@@ -520,7 +666,7 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
           </section>
 
           <section className="incident-grid">
-            <div className="card">
+            <div className="card" data-tour="incident-impact">
               <div className="panel-header">
                 <h3 className="section-title">
                   Impact{" "}
@@ -578,7 +724,7 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
                 <h3 className="section-title">Recovery</h3>
                 <p className="subtle">Post-fix measurement and recovery score.</p>
               </div>
-              {recovery - (
+              {recovery ? (
                 <div className="recovery-panel">
                   <div className="recovery-gauge">
                     <div className="recovery-gauge-track">
@@ -648,7 +794,7 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
               <div className="evidence-block">
                 <div className="evidence-section">
                   <strong>Top paths</strong>
-                  {topPaths.length - (
+                  {topPaths.length ? (
                     <ul>
                       {topPaths.map((item) => (
                         <li key={item.name}>
@@ -662,7 +808,7 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
                 </div>
                 <div className="evidence-section">
                   <strong>Event types</strong>
-                  {topEvents.length - (
+                  {topEvents.length ? (
                     <ul>
                       {topEvents.map((item) => (
                         <li key={item.name}>
@@ -677,7 +823,7 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
                 </div>
                 <div className="evidence-section">
                   <strong>Signal types</strong>
-                  {signalCounts.length - (
+                  {signalCounts.length ? (
                     <ul>
                       {signalCounts.map((item) => (
                         <li key={item.name}>
@@ -693,197 +839,389 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
               </div>
             </div>
 
-            <div className="card">
-              <div className="panel-header">
-                <h3 className="section-title">
-                  Prescriptions{" "}
-                  {!prescriptionsEnabled && (
-                    <span className="badge pro" title="Upgrade to unlock prescriptions.">
-                      Pro
-                    </span>
-                  )}
-                </h3>
-                <p className="subtle">Recommended next actions to stop the bleeding.</p>
-              </div>
-              {!prescriptionsEnabled && (
-                <div className="locked-panel">
-                  Upgrade to see tailored prescriptions and mitigation steps.
+            <div className="card" data-tour="incident-prescriptions">
+              <div className="panel-header incident-tab-header">
+                <div>
+                  <h3 className="section-title">
+                    {activeTab === "playbook" ? "Playbook" : "Prescriptions"}{" "}
+                    {activeTab === "prescriptions" && !prescriptionsEnabled && (
+                      <span className="badge pro" title="Upgrade to unlock prescriptions.">
+                        Pro
+                      </span>
+                    )}
+                  </h3>
+                  <p className="subtle">
+                    {activeTab === "playbook"
+                      ? "Stack-aware remediation steps and verification guidance."
+                      : "Recommended next actions to stop the bleeding."}
+                  </p>
                 </div>
-              )}
-              {prescriptionsEnabled && prescriptions.length > 0 && (
-                <div className="prescription-checklist">
-                  {!canManagePrescriptions && (
-                    <div className="subtle">
-                      Read-only: upgrade your role to apply or update prescriptions.
+                <div className="incident-tab-bar">
+                  <button
+                    type="button"
+                    className={`btn secondary nav-tab ${
+                      activeTab === "prescriptions" ? "active" : ""
+                    }`}
+                    onClick={() => setActiveTab("prescriptions")}
+                  >
+                    Prescriptions
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn secondary nav-tab ${
+                      activeTab === "playbook" ? "active" : ""
+                    }`}
+                    onClick={() => setActiveTab("playbook")}
+                  >
+                    Playbook
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn secondary nav-tab ${
+                      activeTab === "presets" ? "active" : ""
+                    }`}
+                    onClick={() => setActiveTab("presets")}
+                  >
+                    Presets
+                  </button>
+                </div>
+              </div>
+
+              {activeTab === "prescriptions" && (
+                <>
+                  {!prescriptionsEnabled && (
+                    <div className="locked-panel">
+                      Upgrade to see tailored prescriptions and mitigation steps.
                     </div>
                   )}
-                  {orderedPriorityGroups.map((group) => (
-                    <div key={group.key} className="prescription-group">
-                      <div className="prescription-group-header">
-                        <div className="row">
-                          <span
-                            className={`priority-chip ${
-                              group.key === "Other" ? "P3" : group.key
-                            }`}
-                          >
-                            {group.key}
-                          </span>
-                          <strong>
-                            {group.key === "Other" ? "Other priority" : `${group.key} priority`}
-                          </strong>
+                  {prescriptionsEnabled && prescriptions.length > 0 && (
+                    <div className="prescription-checklist">
+                      {!canManagePrescriptions && (
+                        <div className="subtle">
+                          Read-only: upgrade your role to apply or update prescriptions.
                         </div>
-                        <span className="subtle">{group.items.length} items</span>
-                      </div>
-                      <div className="prescription-list">
-                        {group.items.map((item) => {
-                          const state = itemStates[item.id] || {};
-                          const evidencePaths = item.evidence_json?.paths || [];
-                          const statusValue = state.status || item.status || "suggested";
-                          const canApply = statusValue === "suggested" || statusValue === "snoozed";
-                          return (
-                            <div key={item.id} className="prescription-item">
-                              <div className="prescription-header">
-                                <strong>{item.title}</strong>
-                                <div className="prescription-tags">
-                                  <span className={`priority-chip ${item.priority || "P2"}`}>
-                                    {item.priority || "P2"}
-                                  </span>
-                                  <span className="effort-chip">{item.effort}</span>
-                                  <span className={`status-chip ${statusValue}`}>
-                                    {statusValue}
-                                  </span>
-                                </div>
-                              </div>
-                              {item.why_it_matters && (
-                                <div className="subtle">{item.why_it_matters}</div>
-                              )}
-                              {(item.steps || []).length > 0 && (
-                                <ul className="prescription-steps">
-                                  {(item.steps || []).map((step, index) => (
-                                    <li key={`${item.id}-step-${index}`}>{step}</li>
-                                  ))}
-                                </ul>
-                              )}
-                              {evidencePaths.length > 0 && (
-                                <div className="prescription-evidence">
-                                  <span className="subtle">Evidence paths:</span>{" "}
-                                  {evidencePaths.slice(0, 3).join(", ")}
-                                </div>
-                              )}
-                              {item.applied_at && (
-                                <div className="prescription-history">
-                                  Applied by {resolveMemberLabel(item.applied_by_user_id)} on{" "}
-                                  {formatDateTime(item.applied_at)}
-                                </div>
-                              )}
-                              <div className="prescription-controls">
-                                <div className="field">
-                                  <label className="label">Status</label>
-                                  <select
-                                    className="select"
-                                    value={statusValue}
-                                    onChange={(e) =>
-                                      updateItemState(item.id, { status: e.target.value })
-                                    }
-                                    disabled={!canManagePrescriptions}
-                                  >
-                                    <option value="suggested">Suggested</option>
-                                    <option value="applied">Applied</option>
-                                    <option value="dismissed">Dismissed</option>
-                                    <option value="snoozed">Snoozed</option>
-                                  </select>
-                                </div>
-                                {statusValue === "snoozed" && (
-                                  <div className="field">
-                                    <label className="label">Snooze until</label>
-                                    <input
-                                      className="input"
-                                      type="datetime-local"
-                                      value={state.snoozed_until || ""}
-                                      onChange={(e) =>
-                                        updateItemState(item.id, { snoozed_until: e.target.value })
-                                      }
-                                      disabled={!canManagePrescriptions}
-                                    />
+                      )}
+                      {orderedPriorityGroups.map((group) => (
+                        <div key={group.key} className="prescription-group">
+                          <div className="prescription-group-header">
+                            <div className="row">
+                              <span
+                                className={`priority-chip ${
+                                  group.key === "Other" ? "P3" : group.key
+                                }`}
+                              >
+                                {group.key}
+                              </span>
+                              <strong>
+                                {group.key === "Other" ? "Other priority" : `${group.key} priority`}
+                              </strong>
+                            </div>
+                            <span className="subtle">{group.items.length} items</span>
+                          </div>
+                          <div className="prescription-list">
+                            {group.items.map((item) => {
+                              const state = itemStates[item.id] || {};
+                              const evidencePaths = item.evidence_json?.paths || [];
+                              const statusValue = state.status || item.status || "suggested";
+                              const canApply = statusValue === "suggested" || statusValue === "snoozed";
+                              return (
+                                <div key={item.id} className="prescription-item">
+                                  <div className="prescription-header">
+                                    <strong>{item.title}</strong>
+                                    <div className="prescription-tags">
+                                      <span className={`priority-chip ${item.priority || "P2"}`}>
+                                        {item.priority || "P2"}
+                                      </span>
+                                      <span className="effort-chip">{item.effort}</span>
+                                      <span className={`status-chip ${statusValue}`}>
+                                        {statusValue}
+                                      </span>
+                                    </div>
                                   </div>
-                                )}
-                                <div className="field">
-                                  <label className="label">Notes</label>
-                                  <textarea
-                                    className="textarea"
-                                    rows={2}
-                                    value={state.notes || ""}
-                                    onChange={(e) =>
-                                      updateItemState(item.id, { notes: e.target.value })
-                                    }
-                                    placeholder="Add notes or evidence..."
-                                    disabled={!canManagePrescriptions}
-                                  />
-                                </div>
-                                <div className="prescription-actions">
-                                  {canApply && (
-                                    <button
-                                      className="btn primary small"
-                                      onClick={() => handleQuickApply(item)}
-                                      disabled={!canManagePrescriptions || state.saving}
-                                      title={
-                                        canManagePrescriptions
-                                          - "Apply prescription"
-                                          : "Insufficient role to apply"
-                                      }
-                                    >
-                                      Apply
-                                    </button>
+                                  {item.why_it_matters && (
+                                    <div className="subtle">{item.why_it_matters}</div>
                                   )}
+                                  {(item.steps || []).length > 0 && (
+                                    <ul className="prescription-steps">
+                                      {(item.steps || []).map((step, index) => (
+                                        <li key={`${item.id}-step-${index}`}>{step}</li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                  {evidencePaths.length > 0 && (
+                                    <div className="prescription-evidence">
+                                      <span className="subtle">Evidence paths:</span>{" "}
+                                      {evidencePaths.slice(0, 3).join(", ")}
+                                    </div>
+                                  )}
+                                  {item.applied_at && (
+                                    <div className="prescription-history">
+                                      Applied by {resolveMemberLabel(item.applied_by_user_id)} on{" "}
+                                      {formatDateTime(item.applied_at)}
+                                    </div>
+                                  )}
+                                  <div className="prescription-controls">
+                                    <div className="field">
+                                      <label className="label">Status</label>
+                                      <select
+                                        className="select"
+                                        value={statusValue}
+                                        onChange={(e) =>
+                                          updateItemState(item.id, { status: e.target.value })
+                                        }
+                                        disabled={!canManagePrescriptions}
+                                      >
+                                        <option value="suggested">Suggested</option>
+                                        <option value="applied">Applied</option>
+                                        <option value="dismissed">Dismissed</option>
+                                        <option value="snoozed">Snoozed</option>
+                                      </select>
+                                    </div>
+                                    {statusValue === "snoozed" && (
+                                      <div className="field">
+                                        <label className="label">Snooze until</label>
+                                        <input
+                                          className="input"
+                                          type="datetime-local"
+                                          value={state.snoozed_until || ""}
+                                          onChange={(e) =>
+                                            updateItemState(item.id, {
+                                              snoozed_until: e.target.value,
+                                            })
+                                          }
+                                          disabled={!canManagePrescriptions}
+                                        />
+                                      </div>
+                                    )}
+                                    <div className="field">
+                                      <label className="label">Notes</label>
+                                      <textarea
+                                        className="textarea"
+                                        rows={2}
+                                        value={state.notes || ""}
+                                        onChange={(e) =>
+                                          updateItemState(item.id, { notes: e.target.value })
+                                        }
+                                        placeholder="Add notes or evidence..."
+                                        disabled={!canManagePrescriptions}
+                                      />
+                                    </div>
+                                    <div className="prescription-actions">
+                                      {canApply && (
+                                        <button
+                                          className="btn primary small"
+                                          onClick={() => handleQuickApply(item)}
+                                          disabled={!canManagePrescriptions || state.saving}
+                                          title={
+                                            canManagePrescriptions
+                                              ? "Apply prescription"
+                                              : "Insufficient role to apply"
+                                          }
+                                        >
+                                          Apply
+                                        </button>
+                                      )}
+                                      <button
+                                        className="btn secondary small"
+                                        onClick={() => handleItemSave(item)}
+                                        disabled={!canManagePrescriptions || state.saving}
+                                      >
+                                        {state.saving ? "Updating..." : "Update"}
+                                      </button>
+                                      {state.message && (
+                                        <span className="subtle">{state.message}</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="prescription-footer">
+                                    <span className="subtle">
+                                      Expected: {item.expected_effect}
+                                    </span>
+                                    {item.automation_possible && (
+                                      <span className="badge pro">Automation possible</span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                      <div className="prescription-history-block">
+                        <strong>Applied history</strong>
+                        {appliedHistory.length === 0 && (
+                          <div className="subtle">No applied prescriptions yet.</div>
+                        )}
+                        {appliedHistory.length > 0 && (
+                          <ul className="prescription-history-list">
+                            {appliedHistory.map((entry) => (
+                              <li key={entry.id}>
+                                {entry.title} -{" "}
+                                {entry.applied_at
+                                  ? formatDateTime(entry.applied_at)
+                                  : "No apply time"}{" "}
+                                - {resolveMemberLabel(entry.applied_by)}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {prescriptionsEnabled && prescriptions.length === 0 && (
+                    <div className="subtle">No prescriptions generated yet.</div>
+                  )}
+                </>
+              )}
+
+              {activeTab === "playbook" && (
+                <div className="playbook-panel">
+                  {!playbook && (
+                    <div className="subtle">No playbook generated for this incident yet.</div>
+                  )}
+                  {playbook && (
+                    <>
+                      <div className="playbook-meta">
+                        <span className="badge">{playbook.stack_type || "custom"}</span>
+                        <span className="subtle">Version {playbook.version}</span>
+                        <span className="subtle status-chip">{playbook.status}</span>
+                      </div>
+                      {playbookSections.length === 0 && (
+                        <div className="subtle">Playbook sections are unavailable.</div>
+                      )}
+                      {playbookSections.map((section, index) => (
+                        <div key={`${section.title}-${index}`} className="playbook-section">
+                          <div className="playbook-section-header">
+                            <strong>{section.title || "Untitled section"}</strong>
+                            {section.risk_level && (
+                              <span className={`risk-chip ${section.risk_level}`}>
+                                {section.risk_level}
+                              </span>
+                            )}
+                          </div>
+                          {section.context && <p className="subtle">{section.context}</p>}
+                          {(section.steps || []).length > 0 && (
+                            <ol className="playbook-steps">
+                              {(section.steps || []).map((step, stepIndex) => (
+                                <li key={`${section.title}-step-${stepIndex}`}>{step}</li>
+                              ))}
+                            </ol>
+                          )}
+                          {(section.code_snippets || []).length > 0 && (
+                            <div className="playbook-snippets">
+                              {(section.code_snippets || []).map((snippet, snippetIndex) => (
+                                <div
+                                  key={`${section.title}-snippet-${snippetIndex}`}
+                                  className="playbook-snippet"
+                                >
+                                  {snippet.language && (
+                                    <div className="snippet-language">{snippet.language}</div>
+                                  )}
+                                  <pre>{snippet.snippet}</pre>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {(section.verification_steps || []).length > 0 && (
+                            <div className="playbook-checks">
+                              <strong>Verification</strong>
+                              <ul>
+                                {(section.verification_steps || []).map((step, verifyIndex) => (
+                                  <li key={`${section.title}-verify-${verifyIndex}`}>{step}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {(section.rollback_steps || []).length > 0 && (
+                            <div className="playbook-checks">
+                              <strong>Rollback</strong>
+                              <ul>
+                                {(section.rollback_steps || []).map((step, rollbackIndex) => (
+                                  <li key={`${section.title}-rollback-${rollbackIndex}`}>{step}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {activeTab === "presets" && (
+                <div className="preset-panel">
+                  {copyStatus && <div className="subtle">{copyStatus}</div>}
+                  {presets.length === 0 && (
+                    <div className="subtle">No protection presets generated yet.</div>
+                  )}
+                  {presets.map((preset) => {
+                    const content = preset.content_json || {};
+                    const formats = content.formats || {};
+                    const copyBlocks = formats.copy_blocks || [];
+                    const jsonExport = formats.json;
+                    const markdownExport = formats.markdown;
+                    return (
+                      <div key={preset.id} className="preset-card">
+                        <div className="preset-header">
+                          <div>
+                            <strong>{content.title || preset.preset_type}</strong>
+                            <p className="subtle">{content.summary || "Preset guidance."}</p>
+                          </div>
+                          <span className="badge">{preset.preset_type}</span>
+                        </div>
+                        {copyBlocks.length > 0 && (
+                          <div className="preset-blocks">
+                            {copyBlocks.map((block, index) => (
+                              <div key={`${preset.id}-block-${index}`} className="preset-block">
+                                <div className="preset-block-header">
+                                  <span className="subtle">{block.label || "Copy block"}</span>
                                   <button
                                     className="btn secondary small"
-                                    onClick={() => handleItemSave(item)}
-                                    disabled={!canManagePrescriptions || state.saving}
+                                    onClick={() => handleCopy(block.content)}
                                   >
-                                    {state.saving ? "Updating..." : "Update"}
+                                    Copy
                                   </button>
-                                  {state.message && (
-                                    <span className="subtle">{state.message}</span>
-                                  )}
                                 </div>
+                                <pre>{block.content}</pre>
                               </div>
-                              <div className="prescription-footer">
-                                <span className="subtle">
-                                  Expected: {item.expected_effect}
-                                </span>
-                                {item.automation_possible && (
-                                  <span className="badge pro">Automation possible</span>
-                                )}
-                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {jsonExport && (
+                          <div className="preset-block">
+                            <div className="preset-block-header">
+                              <span className="subtle">JSON export</span>
+                              <button
+                                className="btn secondary small"
+                                onClick={() =>
+                                  handleCopy(JSON.stringify(jsonExport, null, 2))
+                                }
+                              >
+                                Copy JSON
+                              </button>
                             </div>
-                          );
-                        })}
+                            <pre>{JSON.stringify(jsonExport, null, 2)}</pre>
+                          </div>
+                        )}
+                        {markdownExport && (
+                          <div className="preset-block">
+                            <div className="preset-block-header">
+                              <span className="subtle">Markdown</span>
+                              <button
+                                className="btn secondary small"
+                                onClick={() => handleCopy(markdownExport)}
+                              >
+                                Copy Markdown
+                              </button>
+                            </div>
+                            <pre>{markdownExport}</pre>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
-                  <div className="prescription-history-block">
-                    <strong>Applied history</strong>
-                    {appliedHistory.length === 0 && (
-                      <div className="subtle">No applied prescriptions yet.</div>
-                    )}
-                    {appliedHistory.length > 0 && (
-                      <ul className="prescription-history-list">
-                        {appliedHistory.map((entry) => (
-                          <li key={entry.id}>
-                            {entry.title} -{" "}
-                            {entry.applied_at
-                              ? formatDateTime(entry.applied_at)
-                              : "No apply time"}{" "}
-                            - {resolveMemberLabel(entry.applied_by)}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
+                    );
+                  })}
                 </div>
-              )}
-              {prescriptionsEnabled && prescriptions.length === 0 && (
-                <div className="subtle">No prescriptions generated yet.</div>
               )}
             </div>
           </section>
@@ -911,8 +1249,82 @@ export default function RevenueIntegrityIncidentDetailPage({ incidentId }) {
               </div>
             )}
           </section>
+
+          <section className="card verification-panel">
+              <div className="panel-header verification-header">
+                <div>
+                  <h3 className="section-title">Verification</h3>
+                  <p className="subtle">
+                    Run checks to confirm protections reduced threats and recovered conversions.
+                  </p>
+                </div>
+                <div className="row">
+                  <button
+                    className="btn primary"
+                    onClick={handleRunVerification}
+                    disabled={verifying || !canManagePrescriptions}
+                    title={
+                      canManagePrescriptions ? "Run verification checks" : "Insufficient role"
+                    }
+                  >
+                    {verifying ? "Running..." : "Run verification"}
+                  </button>
+                </div>
+              </div>
+              {!canManagePrescriptions && (
+                <div className="subtle">
+                  Read-only: upgrade your role to run verification checks.
+                </div>
+              )}
+            {verificationMessage && <div className="subtle">{verificationMessage}</div>}
+            {verificationRuns.length === 0 && (
+              <div className="subtle">No verification runs yet.</div>
+            )}
+            {verificationRuns.length > 0 && (
+              <div className="verification-run">
+                <div className="verification-summary">
+                  <span className={`status-chip ${verificationRuns[0].status}`}>
+                    {verificationRuns[0].status}
+                  </span>
+                  <span className="subtle">
+                    Last run {formatDateTime(verificationRuns[0].created_at)}
+                  </span>
+                </div>
+                <div className="verification-checks">
+                  {(verificationRuns[0].checks || []).map((check, index) => (
+                    <div key={`${check.check_type}-${index}`} className="verification-check">
+                      <div className="verification-check-header">
+                        <strong>{check.label || check.check_type}</strong>
+                        <span className={`status-chip ${check.status}`}>{check.status}</span>
+                      </div>
+                      <div className="verification-metrics">
+                        <span className="subtle">
+                          Before: {check.before ?? "--"}
+                        </span>
+                        <span className="subtle">
+                          After: {check.after ?? "--"}
+                        </span>
+                        <span className="subtle">
+                          Delta:{" "}
+                          {check.delta != null
+                            ? `${Math.round(check.delta * 100)}%`
+                            : "--"}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
         </>
       )}
+      <TourOverlay
+        steps={incidentTourSteps}
+        isOpen={incidentTour.open}
+        onComplete={incidentTour.complete}
+        onDismiss={incidentTour.dismiss}
+      />
     </div>
   );
 }

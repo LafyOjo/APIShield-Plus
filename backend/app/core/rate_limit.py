@@ -21,6 +21,7 @@ class TokenBucket:
 
 _BUCKETS: dict[str, TokenBucket] = {}
 _INVALID_ATTEMPTS: dict[str, tuple[int, float]] = {}
+_ABUSE_ATTEMPTS: dict[str, tuple[int, float]] = {}
 _BANNED: dict[str, float] = {}
 _LAST_CLEANUP = 0.0
 _LOCK = Lock()
@@ -37,6 +38,9 @@ def _cleanup(now: float) -> None:
     invalid_expired = [key for key, entry in _INVALID_ATTEMPTS.items() if now - entry[1] > INVALID_WINDOW_SECONDS]
     for key in invalid_expired:
         _INVALID_ATTEMPTS.pop(key, None)
+    abuse_expired = [key for key, entry in _ABUSE_ATTEMPTS.items() if now - entry[1] > INVALID_WINDOW_SECONDS]
+    for key in abuse_expired:
+        _ABUSE_ATTEMPTS.pop(key, None)
     banned_expired = [key for key, until in _BANNED.items() if until <= now]
     for key in banned_expired:
         _BANNED.pop(key, None)
@@ -113,10 +117,36 @@ def register_invalid_attempt(
     return None
 
 
+def register_abuse_attempt(
+    subject: str | None,
+    *,
+    threshold: int,
+    ban_seconds: int,
+    window_seconds: int = INVALID_WINDOW_SECONDS,
+) -> int | None:
+    if not subject:
+        return None
+    now = time.monotonic()
+    with _LOCK:
+        _cleanup(now)
+        count, window_start = _ABUSE_ATTEMPTS.get(subject, (0, now))
+        if now - window_start > window_seconds:
+            count = 0
+            window_start = now
+        count += 1
+        if count >= threshold:
+            _ABUSE_ATTEMPTS.pop(subject, None)
+            _BANNED[subject] = now + ban_seconds
+            return ban_seconds
+        _ABUSE_ATTEMPTS[subject] = (count, window_start)
+    return None
+
+
 def reset_state() -> None:
     with _LOCK:
         _BUCKETS.clear()
         _INVALID_ATTEMPTS.clear()
+        _ABUSE_ATTEMPTS.clear()
         _BANNED.clear()
         global _LAST_CLEANUP
         _LAST_CLEANUP = 0.0

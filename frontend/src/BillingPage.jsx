@@ -1,29 +1,42 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, ACTIVE_TENANT_KEY } from "./api";
+import { getRoleTemplate } from "./roles";
 
 const PLAN_OPTIONS = [
   {
     key: "pro",
     name: "Pro",
-    price: "$149 / month",
-    highlight: "Unlock full geo map, advanced alerts, and prescriptions.",
+    price: "$249 / month",
+    highlight: "Revenue leak heatmaps, remediation workspace, and verification.",
     features: [
-      "30-day geo history",
-      "City + ASN attribution",
-      "Advanced alerting triggers",
-      "Prescriptions and impact estimates",
+      "10 websites",
+      "30-day retention + geo history",
+      "City-level geo and trust scoring",
+      "Remediation playbooks + verification",
     ],
   },
   {
     key: "business",
     name: "Business",
     price: "$399 / month",
-    highlight: "Extended retention and higher volume limits.",
+    highlight: "SSO, data exports, and advanced alerting thresholds.",
     features: [
-      "90-day geo history",
-      "Priority support",
-      "Higher ingest limits",
-      "Advanced reporting exports",
+      "25 websites",
+      "90-day geo history + ASN detail",
+      "Advanced alerting + exports",
+      "Role templates + priority support",
+    ],
+  },
+  {
+    key: "enterprise",
+    name: "Enterprise",
+    price: "Custom",
+    highlight: "SCIM/SAML, legal hold, and dedicated region options.",
+    features: [
+      "Unlimited websites",
+      "Custom retention + legal hold",
+      "SCIM + SAML provisioning",
+      "Dedicated success + SLA",
     ],
   },
 ];
@@ -38,9 +51,11 @@ export default function BillingPage() {
   const [loadingPortal, setLoadingPortal] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const roleTemplate = useMemo(() => getRoleTemplate(activeRole), [activeRole]);
 
   const canManage = useMemo(
-    () => ["admin", "owner"].includes(String(activeRole || "").toLowerCase()),
+    () =>
+      ["owner", "admin", "billing_admin"].includes(String(activeRole || "").toLowerCase()),
     [activeRole]
   );
 
@@ -91,7 +106,7 @@ export default function BillingPage() {
 
   const handleCheckout = async (planKey) => {
     if (!canManage) {
-      setError("Admin or owner role required to upgrade.");
+      setError("Owner, admin, or billing admin role required to upgrade.");
       return;
     }
     setLoadingPlan(planKey);
@@ -121,7 +136,7 @@ export default function BillingPage() {
 
   const handlePortal = async () => {
     if (!canManage) {
-      setError("Admin or owner role required to manage billing.");
+      setError("Owner, admin, or billing admin role required to manage billing.");
       return;
     }
     setLoadingPortal(true);
@@ -153,6 +168,11 @@ export default function BillingPage() {
           <p className="subtle">
             Upgrade your tier, manage subscriptions, and unlock advanced protections.
           </p>
+          {activeRole && (
+            <div className="help" title={roleTemplate?.description || ""}>
+              Role: {roleTemplate?.label || activeRole}
+            </div>
+          )}
         </div>
         <div className="billing-tenant">
           <label className="label">Active tenant</label>
@@ -181,7 +201,9 @@ export default function BillingPage() {
             {loadingPortal ? "Opening portal..." : "Manage subscription"}
           </button>
           {!canManage && (
-            <span className="help">Admin or owner role required for billing actions.</span>
+            <span className="help">
+              Owner, admin, or billing admin role required for billing actions.
+            </span>
           )}
         </div>
         {error && <p className="error-text">{error}</p>}
@@ -196,13 +218,23 @@ export default function BillingPage() {
                 <h3 className="section-title">{plan.name}</h3>
                 <div className="billing-price">{plan.price}</div>
               </div>
-              <button
-                className="btn primary"
-                onClick={() => handleCheckout(plan.key)}
-                disabled={loadingPlan === plan.key || !canManage}
-              >
-                {loadingPlan === plan.key ? "Starting checkout..." : "Upgrade"}
-              </button>
+            <button
+              className="btn primary"
+              onClick={() => {
+                if (plan.key === "enterprise") {
+                  window.location.href = "mailto:enterprise@apishield.plus";
+                } else {
+                  handleCheckout(plan.key);
+                }
+              }}
+              disabled={loadingPlan === plan.key || !canManage}
+            >
+              {plan.key === "enterprise"
+                ? "Contact sales"
+                : loadingPlan === plan.key
+                  ? "Starting checkout..."
+                  : "Upgrade"}
+            </button>
             </div>
             <p className="subtle">{plan.highlight}</p>
             <ul className="billing-features">

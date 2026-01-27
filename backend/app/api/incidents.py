@@ -8,11 +8,17 @@ from app.api.dependencies import get_current_user
 from app.core.db import get_db
 from app.core.entitlements import resolve_effective_entitlements
 from app.crud.tenants import get_tenant_by_id, get_tenant_by_slug
+from app.crud.website_stack_profiles import get_stack_profile
+from app.models.tenants import Tenant
+from app.models.websites import Website
+from app.presets.generator import get_or_generate_presets
+from app.playbooks.generator import get_or_generate_playbook
 from app.reports.incident_report import assemble_incident_report, build_incident_report_csv
 from app.models.enums import RoleEnum
 from app.models.incidents import Incident, IncidentRecovery
 from app.models.prescriptions import PrescriptionBundle, PrescriptionItem
 from app.models.revenue_impact import ImpactEstimate
+from app.models.verification_runs import VerificationCheckRun
 from app.insights.prescriptions import generate_prescriptions
 from app.schemas.incidents import (
     ImpactEstimateDetail,
@@ -23,8 +29,12 @@ from app.schemas.incidents import (
     PrescriptionBundleRead,
     IncidentRecoveryRead,
 )
+from app.schemas.playbooks import RemediationPlaybookRead
+from app.schemas.presets import ProtectionPresetRead
+from app.schemas.verification import VerificationCheckRunRead
 from app.schemas.prescriptions import PrescriptionItemRead
 from app.tenancy.dependencies import require_role_in_tenant
+from app.verify.evaluator import evaluate_verification
 
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
@@ -70,7 +80,7 @@ def _build_map_link_params(incident: Incident) -> dict | None:
     return params
 
 
-def _resolve_tenant_id(db: Session, tenant_hint: str) -> int:
+def _resolve_tenant(db: Session, tenant_hint: str) -> Tenant:
     if not tenant_hint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     tenant_value = tenant_hint.strip()
@@ -81,7 +91,28 @@ def _resolve_tenant_id(db: Session, tenant_hint: str) -> int:
     )
     if not tenant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    return tenant.id
+    return tenant
+
+
+def _resolve_tenant_id(db: Session, tenant_hint: str) -> int:
+    return _resolve_tenant(db, tenant_hint).id
+
+
+def _get_incident_or_404(
+    db: Session,
+    *,
+    tenant_id: int,
+    incident_id: int,
+    include_demo: bool,
+) -> Incident:
+    incident = (
+        db.query(Incident)
+        .filter(Incident.id == incident_id, Incident.tenant_id == tenant_id)
+        .first()
+    )
+    if not incident or (incident.is_demo and not include_demo):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+    return incident
 
 
 @router.get("/", response_model=list[IncidentListItem])
@@ -95,11 +126,16 @@ def list_incidents(
     env_id: int | None = None,
     limit: int = Query(100, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    include_demo: bool = Query(False, alias="include_demo"),
     db: Session = Depends(get_db),
     ctx=Depends(require_role_in_tenant([RoleEnum.VIEWER], user_resolver=get_current_user)),
 ):
-    tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
+    tenant = _resolve_tenant(db, ctx.tenant_id)
+    tenant_id = tenant.id
+    include_demo = bool(include_demo and tenant.is_demo_mode)
     query = db.query(Incident).filter(Incident.tenant_id == tenant_id)
+    if not include_demo:
+        query = query.filter(Incident.is_demo.is_(False))
     if status_value:
         query = query.filter(Incident.status == status_value)
     if category:
@@ -164,17 +200,19 @@ def list_incidents(
 @router.get("/{incident_id}", response_model=IncidentRead)
 def get_incident(
     incident_id: int,
+    include_demo: bool = Query(False, alias="include_demo"),
     db: Session = Depends(get_db),
     ctx=Depends(require_role_in_tenant([RoleEnum.VIEWER], user_resolver=get_current_user)),
 ):
-    tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
-    incident = (
-        db.query(Incident)
-        .filter(Incident.id == incident_id, Incident.tenant_id == tenant_id)
-        .first()
+    tenant = _resolve_tenant(db, ctx.tenant_id)
+    tenant_id = tenant.id
+    include_demo = bool(include_demo and tenant.is_demo_mode)
+    incident = _get_incident_or_404(
+        db,
+        tenant_id=tenant_id,
+        incident_id=incident_id,
+        include_demo=include_demo,
     )
-    if not incident:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
 
     impact_estimate = None
     if incident.impact_estimate_id:
@@ -203,6 +241,7 @@ def get_incident(
             )
 
     bundle_read = None
+    raw_prescriptions = None
     bundle = (
         db.query(PrescriptionBundle)
         .filter(
@@ -214,6 +253,7 @@ def get_incident(
     if bundle:
         template_map = {}
         raw_items = bundle.items_json if isinstance(bundle.items_json, list) else []
+        raw_prescriptions = raw_items
         for raw in raw_items:
             if isinstance(raw, dict) and raw.get("id"):
                 template_map[str(raw.get("id"))] = raw
@@ -283,6 +323,56 @@ def get_incident(
             evidence_json=recovery.evidence_json,
         )
 
+    stack_profile = None
+    if incident.website_id is not None:
+        stack_profile = get_stack_profile(db, tenant_id=tenant_id, website_id=incident.website_id)
+    website = None
+    if incident.website_id is not None:
+        website = (
+            db.query(Website)
+            .filter(Website.id == incident.website_id, Website.tenant_id == tenant_id)
+            .first()
+        )
+    playbook = get_or_generate_playbook(
+        db,
+        incident=incident,
+        stack_profile=stack_profile,
+        prescriptions=raw_prescriptions,
+    )
+    playbook_read = None
+    if playbook:
+        playbook_read = RemediationPlaybookRead(
+            id=playbook.id,
+            incident_id=playbook.incident_id,
+            website_id=playbook.website_id,
+            environment_id=playbook.environment_id,
+            stack_type=playbook.stack_type,
+            status=playbook.status,
+            version=playbook.version,
+            sections=playbook.sections_json if isinstance(playbook.sections_json, list) else [],
+            created_at=playbook.created_at,
+            updated_at=playbook.updated_at,
+        )
+
+    presets = get_or_generate_presets(
+        db,
+        incident=incident,
+        stack_profile=stack_profile,
+        website=website,
+    )
+    preset_payload = [
+        ProtectionPresetRead(
+            id=preset.id,
+            incident_id=preset.incident_id,
+            website_id=preset.website_id,
+            preset_type=preset.preset_type,
+            content_json=preset.content_json if isinstance(preset.content_json, dict) else {},
+            created_at=preset.created_at,
+            updated_at=preset.updated_at,
+        )
+        for preset in presets
+    ]
+
     return IncidentRead(
         id=incident.id,
         status=incident.status,
@@ -306,6 +396,8 @@ def get_incident(
         impact_estimate=impact_estimate,
         recovery_measurement=recovery_read,
         prescription_bundle=bundle_read,
+        remediation_playbook=playbook_read,
+        protection_presets=preset_payload,
         map_link_params=_build_map_link_params(incident),
         created_at=incident.created_at,
         updated_at=incident.updated_at,
@@ -315,17 +407,19 @@ def get_incident(
 @router.post("/{incident_id}/prescriptions/generate", response_model=PrescriptionBundleRead)
 def generate_incident_prescriptions(
     incident_id: int,
+    include_demo: bool = Query(False, alias="include_demo"),
     db: Session = Depends(get_db),
     ctx=Depends(require_role_in_tenant([RoleEnum.ANALYST, RoleEnum.ADMIN, RoleEnum.OWNER], user_resolver=get_current_user)),
 ):
-    tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
-    incident = (
-        db.query(Incident)
-        .filter(Incident.id == incident_id, Incident.tenant_id == tenant_id)
-        .first()
+    tenant = _resolve_tenant(db, ctx.tenant_id)
+    tenant_id = tenant.id
+    include_demo = bool(include_demo and tenant.is_demo_mode)
+    incident = _get_incident_or_404(
+        db,
+        tenant_id=tenant_id,
+        incident_id=incident_id,
+        include_demo=include_demo,
     )
-    if not incident:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
 
     impact = None
     if incident.impact_estimate_id:
@@ -392,17 +486,19 @@ def generate_incident_prescriptions(
 def update_incident(
     incident_id: int,
     payload: IncidentUpdate,
+    include_demo: bool = Query(False, alias="include_demo"),
     db: Session = Depends(get_db),
     ctx=Depends(require_role_in_tenant([RoleEnum.ADMIN, RoleEnum.OWNER], user_resolver=get_current_user)),
 ):
-    tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
-    incident = (
-        db.query(Incident)
-        .filter(Incident.id == incident_id, Incident.tenant_id == tenant_id)
-        .first()
+    tenant = _resolve_tenant(db, ctx.tenant_id)
+    tenant_id = tenant.id
+    include_demo = bool(include_demo and tenant.is_demo_mode)
+    incident = _get_incident_or_404(
+        db,
+        tenant_id=tenant_id,
+        incident_id=incident_id,
+        include_demo=include_demo,
     )
-    if not incident:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
 
     changes = payload.dict(exclude_unset=True)
     status_value = changes.get("status")
@@ -423,17 +519,19 @@ def update_incident(
 def export_incident_report(
     incident_id: int,
     format_value: str = Query("json", alias="format"),
+    include_demo: bool = Query(False, alias="include_demo"),
     db: Session = Depends(get_db),
     ctx=Depends(require_role_in_tenant([RoleEnum.VIEWER], user_resolver=get_current_user)),
 ):
-    tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
-    incident = (
-        db.query(Incident)
-        .filter(Incident.id == incident_id, Incident.tenant_id == tenant_id)
-        .first()
+    tenant = _resolve_tenant(db, ctx.tenant_id)
+    tenant_id = tenant.id
+    include_demo = bool(include_demo and tenant.is_demo_mode)
+    incident = _get_incident_or_404(
+        db,
+        tenant_id=tenant_id,
+        incident_id=incident_id,
+        include_demo=include_demo,
     )
-    if not incident:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
 
     report_format = (format_value or "json").strip().lower()
     if report_format not in {"json", "csv"}:
@@ -451,3 +549,75 @@ def export_incident_report(
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
     return report
+
+
+@router.get("/{incident_id}/verification", response_model=list[VerificationCheckRunRead])
+def list_verification_runs(
+    incident_id: int,
+    include_demo: bool = Query(False, alias="include_demo"),
+    db: Session = Depends(get_db),
+    ctx=Depends(require_role_in_tenant([RoleEnum.VIEWER], user_resolver=get_current_user)),
+):
+    tenant = _resolve_tenant(db, ctx.tenant_id)
+    tenant_id = tenant.id
+    include_demo = bool(include_demo and tenant.is_demo_mode)
+    _get_incident_or_404(
+        db,
+        tenant_id=tenant_id,
+        incident_id=incident_id,
+        include_demo=include_demo,
+    )
+    runs = (
+        db.query(VerificationCheckRun)
+        .filter(
+            VerificationCheckRun.tenant_id == tenant_id,
+            VerificationCheckRun.incident_id == incident_id,
+        )
+        .order_by(VerificationCheckRun.created_at.desc())
+        .all()
+    )
+    return [
+        VerificationCheckRunRead(
+            id=run.id,
+            incident_id=run.incident_id,
+            website_id=run.website_id,
+            environment_id=run.environment_id,
+            status=run.status,
+            checks=run.checks_json if isinstance(run.checks_json, list) else [],
+            notes=run.notes,
+            created_at=run.created_at,
+            updated_at=run.updated_at,
+        )
+        for run in runs
+    ]
+
+
+@router.post("/{incident_id}/verification", response_model=VerificationCheckRunRead)
+def run_verification(
+    incident_id: int,
+    include_demo: bool = Query(False, alias="include_demo"),
+    db: Session = Depends(get_db),
+    ctx=Depends(require_role_in_tenant([RoleEnum.ANALYST, RoleEnum.ADMIN, RoleEnum.OWNER], user_resolver=get_current_user)),
+):
+    tenant = _resolve_tenant(db, ctx.tenant_id)
+    tenant_id = tenant.id
+    include_demo = bool(include_demo and tenant.is_demo_mode)
+    incident = _get_incident_or_404(
+        db,
+        tenant_id=tenant_id,
+        incident_id=incident_id,
+        include_demo=include_demo,
+    )
+
+    run = evaluate_verification(db, incident=incident)
+    return VerificationCheckRunRead(
+        id=run.id,
+        incident_id=run.incident_id,
+        website_id=run.website_id,
+        environment_id=run.environment_id,
+        status=run.status,
+        checks=run.checks_json if isinstance(run.checks_json, list) else [],
+        notes=run.notes,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+    )

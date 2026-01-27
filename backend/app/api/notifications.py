@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
@@ -21,6 +21,7 @@ from app.crud.notification_rules import (
     list_rules,
     update_rule,
 )
+from app.crud.audit import create_audit_log
 from app.crud.tenants import get_tenant_by_id, get_tenant_by_slug
 from app.models.enums import RoleEnum
 from app.models.notification_channels import NotificationChannel
@@ -122,8 +123,14 @@ def list_notification_channels(
 @router.post("/channels", response_model=NotificationChannelRead)
 def create_notification_channel(
     payload: NotificationChannelCreate,
+    request: Request,
     db: Session = Depends(get_db),
-    ctx=Depends(require_role_in_tenant([RoleEnum.ADMIN, RoleEnum.OWNER], user_resolver=get_current_user)),
+    ctx=Depends(
+        require_role_in_tenant(
+            [RoleEnum.OWNER, RoleEnum.ADMIN, RoleEnum.SECURITY_ADMIN],
+            user_resolver=get_current_user,
+        )
+    ),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
     entitlements = resolve_effective_entitlements(db, tenant_id)
@@ -140,6 +147,13 @@ def create_notification_channel(
         config_secret=payload.config_secret,
         categories_allowed=payload.categories_allowed,
     )
+    create_audit_log(
+        db,
+        tenant_id=tenant_id,
+        username=ctx.username,
+        event=f"notification_channel_created:{channel.id}",
+        request=request,
+    )
     return channel
 
 
@@ -147,8 +161,14 @@ def create_notification_channel(
 def update_notification_channel(
     channel_id: int,
     payload: NotificationChannelUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    ctx=Depends(require_role_in_tenant([RoleEnum.ADMIN, RoleEnum.OWNER], user_resolver=get_current_user)),
+    ctx=Depends(
+        require_role_in_tenant(
+            [RoleEnum.OWNER, RoleEnum.ADMIN, RoleEnum.SECURITY_ADMIN],
+            user_resolver=get_current_user,
+        )
+    ),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
     channel = update_channel(
@@ -165,19 +185,39 @@ def update_notification_channel(
     )
     if not channel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+    create_audit_log(
+        db,
+        tenant_id=tenant_id,
+        username=ctx.username,
+        event=f"notification_channel_updated:{channel_id}",
+        request=request,
+    )
     return channel
 
 
 @router.delete("/channels/{channel_id}", response_model=NotificationChannelRead)
 def delete_notification_channel(
     channel_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    ctx=Depends(require_role_in_tenant([RoleEnum.ADMIN, RoleEnum.OWNER], user_resolver=get_current_user)),
+    ctx=Depends(
+        require_role_in_tenant(
+            [RoleEnum.OWNER, RoleEnum.ADMIN, RoleEnum.SECURITY_ADMIN],
+            user_resolver=get_current_user,
+        )
+    ),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
     channel = disable_channel(db, tenant_id, channel_id)
     if not channel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+    create_audit_log(
+        db,
+        tenant_id=tenant_id,
+        username=ctx.username,
+        event=f"notification_channel_deleted:{channel_id}",
+        request=request,
+    )
     return channel
 
 
@@ -185,7 +225,12 @@ def delete_notification_channel(
 def test_notification_channel(
     channel_id: int,
     db: Session = Depends(get_db),
-    ctx=Depends(require_role_in_tenant([RoleEnum.ADMIN, RoleEnum.OWNER], user_resolver=get_current_user)),
+    ctx=Depends(
+        require_role_in_tenant(
+            [RoleEnum.OWNER, RoleEnum.ADMIN, RoleEnum.SECURITY_ADMIN],
+            user_resolver=get_current_user,
+        )
+    ),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
     channel = get_channel(db, tenant_id, channel_id)
@@ -258,8 +303,14 @@ def list_notification_rules(
 @router.post("/rules", response_model=NotificationRuleRead)
 def create_notification_rule(
     payload: NotificationRuleCreate,
+    request: Request,
     db: Session = Depends(get_db),
-    ctx=Depends(require_role_in_tenant([RoleEnum.ADMIN, RoleEnum.OWNER], user_resolver=get_current_user)),
+    ctx=Depends(
+        require_role_in_tenant(
+            [RoleEnum.OWNER, RoleEnum.ADMIN, RoleEnum.SECURITY_ADMIN],
+            user_resolver=get_current_user,
+        )
+    ),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
     try:
@@ -277,6 +328,13 @@ def create_notification_rule(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    create_audit_log(
+        db,
+        tenant_id=tenant_id,
+        username=ctx.username,
+        event=f"notification_rule_created:{rule.id}",
+        request=request,
+    )
     return _rule_read(db, rule)
 
 
@@ -284,8 +342,14 @@ def create_notification_rule(
 def update_notification_rule(
     rule_id: int,
     payload: NotificationRuleUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    ctx=Depends(require_role_in_tenant([RoleEnum.ADMIN, RoleEnum.OWNER], user_resolver=get_current_user)),
+    ctx=Depends(
+        require_role_in_tenant(
+            [RoleEnum.OWNER, RoleEnum.ADMIN, RoleEnum.SECURITY_ADMIN],
+            user_resolver=get_current_user,
+        )
+    ),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
     try:
@@ -305,19 +369,39 @@ def update_notification_rule(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if not rule:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")
+    create_audit_log(
+        db,
+        tenant_id=tenant_id,
+        username=ctx.username,
+        event=f"notification_rule_updated:{rule_id}",
+        request=request,
+    )
     return _rule_read(db, rule)
 
 
 @router.delete("/rules/{rule_id}", response_model=NotificationRuleRead)
 def delete_notification_rule(
     rule_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    ctx=Depends(require_role_in_tenant([RoleEnum.ADMIN, RoleEnum.OWNER], user_resolver=get_current_user)),
+    ctx=Depends(
+        require_role_in_tenant(
+            [RoleEnum.OWNER, RoleEnum.ADMIN, RoleEnum.SECURITY_ADMIN],
+            user_resolver=get_current_user,
+        )
+    ),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
     rule = update_rule(db, tenant_id, rule_id, is_enabled=False)
     if not rule:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")
+    create_audit_log(
+        db,
+        tenant_id=tenant_id,
+        username=ctx.username,
+        event=f"notification_rule_deleted:{rule_id}",
+        request=request,
+    )
     return _rule_read(db, rule)
 
 

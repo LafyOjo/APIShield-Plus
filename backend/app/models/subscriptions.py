@@ -26,7 +26,7 @@ class Subscription(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    plan_key = Column(String, nullable=True, index=True)
+    plan_key = Column(String, nullable=True)
     provider = Column(String, nullable=False, default="manual")
     provider_subscription_id = Column(String, nullable=True)
     stripe_customer_id = Column(String, nullable=True)

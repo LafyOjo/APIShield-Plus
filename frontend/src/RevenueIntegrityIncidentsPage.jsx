@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, ACTIVE_TENANT_KEY } from "./api";
+import DemoDataToggle from "./DemoDataToggle";
+import { useDemoData } from "./useDemoData";
 
 const TIME_RANGES = [
   { value: "24h", label: "Last 24 hours", days: 1 },
@@ -140,6 +142,7 @@ export default function RevenueIntegrityIncidentsPage() {
   const [incidents, setIncidents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const { enabled: includeDemo, setEnabled: setIncludeDemo } = useDemoData();
   const [debouncedFilters, setDebouncedFilters] = useState({
     activeTenant,
     websiteId,
@@ -148,6 +151,7 @@ export default function RevenueIntegrityIncidentsPage() {
     severity,
     from: fromTs,
     to: toTs,
+    includeDemo,
   });
 
   const rangeValue = useMemo(() => resolveRangeValue(fromTs, toTs), [fromTs, toTs]);
@@ -263,10 +267,11 @@ export default function RevenueIntegrityIncidentsPage() {
         severity,
         from: fromTs,
         to: toTs,
+        includeDemo,
       });
     }, 250);
     return () => clearTimeout(handle);
-  }, [activeTenant, websiteId, status, category, severity, fromTs, toTs]);
+  }, [activeTenant, websiteId, status, category, severity, fromTs, toTs, includeDemo]);
 
   useEffect(() => {
     if (!isValidDate(fromTs) || !isValidDate(toTs)) return;
@@ -277,9 +282,10 @@ export default function RevenueIntegrityIncidentsPage() {
     if (status) params.set("status", status);
     if (category) params.set("category", category);
     if (severity) params.set("severity", severity);
+    if (includeDemo) params.set("demo", "1");
     const nextUrl = `${window.location.pathname}?${params.toString()}${window.location.hash || ""}`;
     window.history.replaceState({}, "", nextUrl);
-  }, [fromTs, toTs, websiteId, status, category, severity]);
+  }, [fromTs, toTs, websiteId, status, category, severity, includeDemo]);
 
   useEffect(() => {
     if (!debouncedFilters.activeTenant) return;
@@ -297,6 +303,7 @@ export default function RevenueIntegrityIncidentsPage() {
         if (debouncedFilters.status) params.set("status", debouncedFilters.status);
         if (debouncedFilters.category) params.set("category", debouncedFilters.category);
         if (debouncedFilters.severity) params.set("severity", debouncedFilters.severity);
+        if (debouncedFilters.includeDemo) params.set("include_demo", "true");
         const resp = await apiFetch(`/api/v1/incidents?${params.toString()}`);
         if (!resp.ok) {
           throw new Error("Unable to load incidents");
@@ -326,6 +333,15 @@ export default function RevenueIntegrityIncidentsPage() {
           <p className="subtle">
             Track conversion-impacting incidents, costs, and recommended actions.
           </p>
+          <div className="row revenue-nav">
+            <button className="btn secondary nav-tab active">Incidents</button>
+            <button
+              className="btn secondary nav-tab"
+              onClick={() => navigateTo("/dashboard/revenue-integrity/leaks")}
+            >
+              Leak Heatmap
+            </button>
+          </div>
         </div>
         <div className="incidents-tenant">
           <label className="label">Active tenant</label>
@@ -424,6 +440,13 @@ export default function RevenueIntegrityIncidentsPage() {
               ))}
             </select>
           </div>
+          <div className="field">
+            <label className="label">Demo data</label>
+            <DemoDataToggle
+              enabled={includeDemo}
+              onToggle={() => setIncludeDemo((prev) => !prev)}
+            />
+          </div>
         </div>
       </section>
 
@@ -496,7 +519,9 @@ export default function RevenueIntegrityIncidentsPage() {
                         className="btn secondary small"
                         onClick={() =>
                           navigateTo(
-                            `/dashboard/revenue-integrity/incidents/${incident.id}`
+                            includeDemo
+                              ? `/dashboard/revenue-integrity/incidents/${incident.id}?demo=1`
+                              : `/dashboard/revenue-integrity/incidents/${incident.id}`
                           )
                         }
                       >
