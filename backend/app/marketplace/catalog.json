@@ -1,0 +1,80 @@
+[
+  {
+    "template_type": "playbook",
+    "title": "Credential stuffing response (baseline)",
+    "description": "Step-by-step response to login attack spikes with verification steps and rollback guidance.",
+    "stack_type": "custom",
+    "tags": ["login", "credential_stuffing", "rate_limit"],
+    "content_json": {
+      "stack_type": "custom",
+      "version": 1,
+      "sections": [
+        {
+          "title": "Containment",
+          "context": "Stop the immediate login flood to protect user accounts and availability.",
+          "steps": [
+            "Enable rate limits on /login (edge or app).",
+            "Block known datacenter ASNs for the next 24 hours.",
+            "Increase lockout thresholds for repeat offenders."
+          ],
+          "verification_steps": [
+            "Login failure rate drops below 5% within 30 minutes.",
+            "No spike in lockout false positives."
+          ],
+          "rollback_steps": [
+            "Reduce rate limit burst back to baseline."
+          ],
+          "risk_level": "medium"
+        }
+      ]
+    },
+    "source": "official",
+    "status": "published",
+    "safety_notes": "Use report-only WAF rules first if unsure about customer traffic."
+  },
+  {
+    "template_type": "preset",
+    "title": "CSP Report-Only Starter",
+    "description": "Generate a report-only CSP header aligned to integrity monitoring.",
+    "stack_type": "custom",
+    "tags": ["csp", "integrity", "report-only"],
+    "content_json": {
+      "preset_type": "csp",
+      "content": {
+        "mode": "report-only",
+        "directives": {
+          "default-src": ["'self'"],
+          "script-src": ["'self'"],
+          "style-src": ["'self'", "'unsafe-inline'"],
+          "img-src": ["'self'", "data:"],
+          "report-uri": ["https://api.apishield.local/ingest/integrity"]
+        }
+      }
+    },
+    "source": "official",
+    "status": "published",
+    "safety_notes": "Start in report-only mode to avoid blocking critical resources."
+  },
+  {
+    "template_type": "alert_rules",
+    "title": "Checkout error spike alerts",
+    "description": "Notify your team when checkout errors spike above baseline.",
+    "stack_type": null,
+    "tags": ["alerts", "checkout", "errors"],
+    "content_json": {
+      "rules": [
+        {
+          "name": "Checkout JS error spike",
+          "trigger_type": "js_error_spike",
+          "filters": {"path": "/checkout"},
+          "thresholds": {"min_events": 20, "increase_pct": 40},
+          "quiet_hours": null,
+          "is_enabled": true
+        }
+      ]
+    },
+    "source": "official",
+    "status": "published",
+    "safety_notes": null
+  }
+]

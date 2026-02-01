@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
+from app.core.config import settings
 from app.core.db import get_db
 from app.crud.tenants import get_tenant_by_id, get_tenant_by_slug
 from app.entitlements.enforcement import require_feature
@@ -149,7 +150,7 @@ def list_revenue_leaks(
     tenant_id = tenant.id
     entitlements = resolve_entitlements_for_tenant(db, tenant_id)
     require_feature(entitlements, "revenue_leaks", message="Revenue leak estimates require a Pro plan")
-    include_demo = bool(include_demo and tenant.is_demo_mode)
+    include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     from_ts = _normalize_ts(from_ts)
     to_ts = _normalize_ts(to_ts)
     if to_ts is None:

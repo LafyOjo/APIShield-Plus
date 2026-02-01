@@ -16,7 +16,9 @@ client = TestClient(app)
 PUBLIC_PATH_PREFIXES = {
     "/docs",
     "/docs/oauth2-redirect",
+    "/docs/openapi.yaml",
     "/openapi.json",
+    "/openapi.yaml",
     "/metrics",
     "/ingest",
     "/api/ingest",

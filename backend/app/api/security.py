@@ -489,7 +489,7 @@ def list_security_events(
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
     tenant = get_tenant_by_id(db, tenant_id)
-    include_demo = bool(include_demo and tenant and tenant.is_demo_mode)
+    include_demo = bool(include_demo and tenant and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     entitlements = resolve_effective_entitlements(db, tenant_id)
     features = entitlements.get("features", {})
     limits = entitlements.get("limits", {})

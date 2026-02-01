@@ -5,6 +5,9 @@ class UserCreate(BaseModel):
     username: str
     password: str
     role: str | None = None
+    referral_code: str | None = None
+    affiliate_code: str | None = None
+    affiliate_meta: dict | None = None
 
 
 class UserRead(BaseModel):

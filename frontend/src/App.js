@@ -8,7 +8,7 @@
 */
 
 import { useState, useEffect } from "react";
-import { ACTIVE_TENANT_KEY, AUTH_TOKEN_KEY, USERNAME_KEY, logAuditEvent } from "./api";
+import { ACTIVE_TENANT_KEY, AUTH_TOKEN_KEY, USERNAME_KEY, apiFetch, logAuditEvent } from "./api";
 import ScoreForm from "./ScoreForm";
 import AlertsTable from "./AlertsTable";
 import EventsTable from "./EventsTable";
@@ -28,13 +28,21 @@ import WebsiteSettingsPage from "./WebsiteSettingsPage";
 import OnboardingWizardPage from "./OnboardingWizardPage";
 import NotificationsSettingsPage from "./NotificationsSettingsPage";
 import BillingPage from "./BillingPage";
+import ReferralProgramPage from "./ReferralProgramPage";
 import ComplianceAuditPage from "./ComplianceAuditPage";
 import ComplianceRetentionPage from "./ComplianceRetentionPage";
 import AdminConsolePage from "./AdminConsolePage";
 import AdminStatusPage from "./AdminStatusPage";
 import AdminActivationPage from "./AdminActivationPage";
+import AdminAffiliatePage from "./AdminAffiliatePage";
+import AdminGrowthPage from "./AdminGrowthPage";
 import StatusPage from "./StatusPage";
 import DocsHubPage from "./DocsHubPage";
+import IntegrationsDirectoryPage, { PublicIntegrationsPage } from "./IntegrationsDirectoryPage";
+import MarketplacePage, { PublicMarketplacePage } from "./MarketplacePage";
+import MarketplaceTemplateDetailPage, { PublicMarketplaceTemplateDetailPage } from "./MarketplaceTemplateDetailPage";
+import AdminMarketplacePage from "./AdminMarketplacePage";
+import PartnerDashboardPage from "./PartnerDashboardPage";
 import "./App.css";
 
 /*
@@ -60,6 +68,8 @@ function App() {
   # to the login screen automatically.
   */
   const [token, setToken] = useState(localStorage.getItem(AUTH_TOKEN_KEY));
+  const [partnerProfile, setPartnerProfile] = useState(null);
+  const [partnerChecked, setPartnerChecked] = useState(false);
 
   useEffect(() => {
     const hashParams = new URLSearchParams(
@@ -163,6 +173,43 @@ function App() {
     setCurrentRoute(path);
   };
 
+  useEffect(() => {
+    let active = true;
+    if (!token) {
+      setPartnerProfile(null);
+      setPartnerChecked(false);
+      return () => {
+        active = false;
+      };
+    }
+    const loadPartnerProfile = async () => {
+      try {
+        const resp = await apiFetch("/api/v1/partners/me", { skipReauth: true });
+        if (!active) return;
+        if (resp.ok) {
+          const data = await resp.json();
+          setPartnerProfile(data);
+        } else {
+          setPartnerProfile(null);
+        }
+      } catch (err) {
+        if (active) setPartnerProfile(null);
+      } finally {
+        if (active) setPartnerChecked(true);
+      }
+    };
+    loadPartnerProfile();
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    if (partnerProfile && !currentRoute.startsWith("/partner")) {
+      navigate("/partner");
+    }
+  }, [partnerProfile, currentRoute]);
+
   const isMapRoute =
     currentRoute.startsWith("/dashboard/security/map") ||
     currentRoute.startsWith("/map") ||
@@ -177,6 +224,9 @@ function App() {
     currentRoute.startsWith("/compliance/audit") ||
     currentRoute.startsWith("/dashboard/compliance/retention") ||
     currentRoute.startsWith("/compliance/retention");
+  const isReferralsRoute =
+    currentRoute.startsWith("/dashboard/referrals") ||
+    currentRoute.startsWith("/referrals");
   const websiteSettingsMatch = currentRoute.match(
     /^\/dashboard\/websites\/(\d+)\/settings/
   );
@@ -188,14 +238,30 @@ function App() {
   const isOnboardingRoute =
     currentRoute.startsWith("/dashboard/onboarding") ||
     currentRoute.startsWith("/onboarding");
+  const isPartnerRoute = currentRoute.startsWith("/partner");
   const isAdminRoute =
     currentRoute.startsWith("/admin");
   const isAdminStatusRoute = currentRoute.startsWith("/admin/status");
   const isAdminActivationRoute = currentRoute.startsWith("/admin/activation");
+  const isAdminAffiliateRoute = currentRoute.startsWith("/admin/affiliates");
+  const isAdminGrowthRoute = currentRoute.startsWith("/admin/growth");
+  const isAdminMarketplaceRoute = currentRoute.startsWith("/admin/marketplace");
   const isStatusRoute = currentRoute.startsWith("/status");
   const isHelpRoute =
     currentRoute.startsWith("/dashboard/help") ||
     currentRoute.startsWith("/help");
+  const isIntegrationsRoute =
+    currentRoute.startsWith("/dashboard/integrations") ||
+    currentRoute.startsWith("/integrations");
+  const marketplaceDetailMatch = currentRoute.match(
+    /^\/dashboard\/marketplace\/(\d+)/
+  );
+  const marketplacePublicDetailMatch = currentRoute.match(/^\/marketplace\/(\d+)/);
+  const marketplaceId = marketplaceDetailMatch ? marketplaceDetailMatch[1] : null;
+  const marketplacePublicId = marketplacePublicDetailMatch ? marketplacePublicDetailMatch[1] : null;
+  const isMarketplaceRoute =
+    currentRoute.startsWith("/dashboard/marketplace") ||
+    currentRoute.startsWith("/marketplace");
   const revenuePrefix = "/dashboard/revenue-integrity";
   const leaksPrefix = "/dashboard/revenue-integrity/leaks";
   const incidentDetailMatch = currentRoute.match(
@@ -219,6 +285,17 @@ function App() {
     return <StatusPage />;
   }
 
+  if (!token && isIntegrationsRoute) {
+    return <PublicIntegrationsPage />;
+  }
+
+  if (!token && isMarketplaceRoute) {
+    if (marketplacePublicId) {
+      return <PublicMarketplaceTemplateDetailPage templateId={marketplacePublicId} />;
+    }
+    return <PublicMarketplacePage />;
+  }
+
   if (!token) {
     return (
       <div className="app-container stack">
@@ -234,6 +311,35 @@ function App() {
           <h2 className="section-title">Please sign in</h2>
           <LoginForm onLogin={setToken} />
         </section>
+      </div>
+    );
+  }
+
+  if (isPartnerRoute) {
+    return (
+      <div className="app-container stack">
+        <header className="header bar">
+          <div>
+            <h1 className="dashboard-header">APIShield+ Partner Portal</h1>
+            {partnerProfile && (
+              <div className="muted small">
+                {partnerProfile.partner_name} · {partnerProfile.partner_code}
+              </div>
+            )}
+          </div>
+          <div className="row">
+            <button className="btn secondary" onClick={toggleTheme}>
+              {isDark ? "Light mode" : "Dark mode"}
+            </button>
+            <button className="btn danger" onClick={handleLogout}>
+              Logout
+            </button>
+          </div>
+        </header>
+        <PartnerDashboardPage
+          partnerProfile={partnerProfile}
+          partnerChecked={partnerChecked}
+        />
       </div>
     );
   }
@@ -254,7 +360,7 @@ function App() {
             className={`btn secondary nav-tab ${
               !isMapRoute && !isEventsRoute && !isRevenueRoute && !isNotificationsRoute
                 && !isBillingRoute && !isComplianceRoute && !isAdminRoute && !isWebsiteSettingsRoute
-                && !isOnboardingRoute && !isHelpRoute
+                && !isOnboardingRoute && !isHelpRoute && !isMarketplaceRoute
                 ? "active"
                 : ""
             }`}
@@ -299,6 +405,18 @@ function App() {
             Help
           </button>
           <button
+            className={`btn secondary nav-tab ${isIntegrationsRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/integrations")}
+          >
+            Integrations
+          </button>
+          <button
+            className={`btn secondary nav-tab ${isMarketplaceRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/marketplace")}
+          >
+            Marketplace
+          </button>
+          <button
             className={`btn secondary nav-tab ${isComplianceRoute ? "active" : ""}`}
             onClick={() => navigate("/dashboard/compliance/audit")}
           >
@@ -326,11 +444,41 @@ function App() {
               Activation
             </button>
           )}
+          {isAdminRoute && (
+            <button
+              className={`btn secondary nav-tab ${isAdminGrowthRoute ? "active" : ""}`}
+              onClick={() => navigate("/admin/growth")}
+            >
+              Growth
+            </button>
+          )}
+          {isAdminRoute && (
+            <button
+              className={`btn secondary nav-tab ${isAdminAffiliateRoute ? "active" : ""}`}
+              onClick={() => navigate("/admin/affiliates")}
+            >
+              Affiliates
+            </button>
+          )}
+          {isAdminRoute && (
+            <button
+              className={`btn secondary nav-tab ${isAdminMarketplaceRoute ? "active" : ""}`}
+              onClick={() => navigate("/admin/marketplace")}
+            >
+              Templates
+            </button>
+          )}
           <button
             className={`btn secondary nav-tab ${isNotificationsRoute ? "active" : ""}`}
             onClick={() => navigate("/dashboard/settings/notifications")}
           >
             Notifications
+          </button>
+          <button
+            className={`btn secondary nav-tab ${isReferralsRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/referrals")}
+          >
+            Referrals
           </button>
           <button className="btn secondary" onClick={toggleTheme}>
             {isDark ? "Light mode" : "Dark mode"}
@@ -343,10 +491,16 @@ function App() {
 
       {isRemediationRoute ? (
         <RemediationWorkspacePage incidentId={remediationIncidentId} />
+      ) : marketplaceId ? (
+        <MarketplaceTemplateDetailPage templateId={marketplaceId} />
+      ) : isMarketplaceRoute ? (
+        <MarketplacePage />
       ) : isOnboardingRoute ? (
         <OnboardingWizardPage />
       ) : isHelpRoute ? (
         <DocsHubPage />
+      ) : isIntegrationsRoute ? (
+        <IntegrationsDirectoryPage />
       ) : isIncidentDetailRoute ? (
         <RevenueIntegrityIncidentDetailPage incidentId={incidentId} />
       ) : isWebsiteSettingsRoute ? (
@@ -361,10 +515,12 @@ function App() {
         <SecurityEventsPage />
       ) : isNotificationsRoute ? (
         <NotificationsSettingsPage />
+      ) : isReferralsRoute ? (
+        <ReferralProgramPage />
       ) : isComplianceRoute ? (
         isComplianceRetentionRoute ? <ComplianceRetentionPage /> : <ComplianceAuditPage />
       ) : isAdminRoute ? (
-        isAdminStatusRoute ? <AdminStatusPage /> : isAdminActivationRoute ? <AdminActivationPage /> : <AdminConsolePage />
+        isAdminStatusRoute ? <AdminStatusPage /> : isAdminActivationRoute ? <AdminActivationPage /> : isAdminGrowthRoute ? <AdminGrowthPage /> : isAdminAffiliateRoute ? <AdminAffiliatePage /> : isAdminMarketplaceRoute ? <AdminMarketplacePage /> : <AdminConsolePage />
       ) : isBillingRoute ? (
         <BillingPage />
       ) : (

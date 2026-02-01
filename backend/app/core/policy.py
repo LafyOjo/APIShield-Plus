@@ -31,7 +31,8 @@ POLICY_FAIL_MODE = os.getenv("POLICY_FAIL_MODE", "open").lower()  # "open" or "c
 # You can extend the list via POLICY_SKIP_PATHS (comma-separated).
 DEFAULT_SKIP_PATHS = (
     "/metrics", "/ping", "/health", "/healthz",
-    "/docs", "/openapi.json",
+    "/docs", "/openapi.json", "/openapi.yaml",
+    "/docs/openapi.yaml",
     "/score",                 # scoring stays open
     "/login", "/register",    # allow auth
     "/api/token",

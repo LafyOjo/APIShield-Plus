@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # Environment marker used for secure defaults and startup checks.
     # Accepted values: development, staging, production.
     ENVIRONMENT: str = "development"
+    # Launch-mode toggle: enable strict production posture.
+    # When enabled, demo-only behaviors are disabled.
+    LAUNCH_MODE: bool = False
 
     # Core DB connection string, like sqlite:///./app.db or Postgres URL.
     # Needed by SQLAlchemy to connect to the persistence layer.
@@ -71,6 +74,9 @@ class Settings(BaseSettings):
     # API key responses and embed snippet configuration
     API_KEY_SECRET_RETURN_IN_RESPONSE: bool = False
     AGENT_URL: str = "https://cdn.yourapp.com/agent.js"
+    BADGE_SIGNATURE_TTL_SECONDS: int = 300
+    BADGE_JS_CACHE_SECONDS: int = 60
+    BADGE_DATA_CACHE_SECONDS: int = 60
 
     # Proxy/client IP extraction settings
     TRUST_PROXY_HEADERS: bool = False
@@ -129,6 +135,13 @@ class Settings(BaseSettings):
 
     # Demo data seeding / expiry.
     DEMO_DATA_RETENTION_DAYS: int = 7
+
+    # Onboarding email nudges.
+    EMAILS_ENABLED: bool = True
+    ONBOARDING_NO_EVENTS_HOURS: int = 2
+
+    # Affiliate program settings.
+    AFFILIATE_REFUND_WINDOW_DAYS: int = 14
 
     # Multi-region readiness (data residency).
     DEFAULT_TENANT_REGION: str = "us"

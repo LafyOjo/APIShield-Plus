@@ -20,3 +20,9 @@ class OnboardingStepComplete(BaseModel):
     step: str
     website_id: Optional[int] = None
     environment_id: Optional[int] = None
+
+
+class FeatureLockedEvent(BaseModel):
+    feature_key: str
+    source: Optional[str] = None
+    action: Optional[str] = None

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, ACTIVE_TENANT_KEY } from "./api";
 import { getRoleTemplate } from "./roles";
+import PaywallCard from "./components/PaywallCard";
+import PaywallModal from "./components/PaywallModal";
 
 const TAB_OPTIONS = [
   { value: "channels", label: "Channels" },
@@ -47,7 +49,6 @@ const HISTORY_RANGES = [
   { value: "all", label: "All time", days: null },
 ];
 
-const UPGRADE_PATH = "/billing";
 
 const buildTimeWindow = (days, now = new Date()) => {
   if (!days) return { from: null, to: null };
@@ -149,6 +150,7 @@ export default function NotificationsSettingsPage() {
 
   const [historyStatus, setHistoryStatus] = useState("");
   const [historyRange, setHistoryRange] = useState("7d");
+  const [paywallConfig, setPaywallConfig] = useState(null);
   const roleTemplate = useMemo(() => getRoleTemplate(activeRole), [activeRole]);
 
   const canManage = useMemo(
@@ -161,6 +163,41 @@ export default function NotificationsSettingsPage() {
   const ruleLimit = parsePositiveInt(limits.notification_rules);
   const channelLimitReached = channelLimit != null && channels.length >= channelLimit;
   const ruleLimitReached = ruleLimit != null && rules.length >= ruleLimit;
+
+  const openNotificationsPaywall = useCallback((source, overrides = {}) => {
+    setPaywallConfig({
+      title: "Upgrade notification automation",
+      subtitle: "Unlock higher limits and advanced alerting workflows.",
+      bullets: [
+        "Conversion drop alerts and revenue leak notifications.",
+        "Higher channel and rule limits per workspace.",
+        "Advanced routing and webhook automation.",
+      ],
+      previewTitle: "Preview",
+      preview: (
+        <div className="paywall-preview-list">
+          <div className="paywall-preview-row">
+            <span>Conversion drop alert</span>
+            <span>Pro</span>
+          </div>
+          <div className="paywall-preview-row">
+            <span>Revenue leak workflow</span>
+            <span>Pro</span>
+          </div>
+          <div className="paywall-preview-row">
+            <span>Priority routing</span>
+            <span>Business</span>
+          </div>
+        </div>
+      ),
+      featureKey: "advanced_alerting",
+      source,
+      planKey: "pro",
+      ...overrides,
+    });
+  }, []);
+
+  const closePaywall = useCallback(() => setPaywallConfig(null), []);
 
   const channelMap = useMemo(() => {
     const map = new Map();
@@ -332,12 +369,14 @@ export default function NotificationsSettingsPage() {
     }
     if (channelForm.id == null && channelLimitReached) {
       setChannelFormError("Channel limit reached for your plan.");
+      openNotificationsPaywall("notifications_channel_limit");
       return;
     }
 
     const channelType = channelForm.type;
     if (channelType === "webhook" && !advancedAlerting) {
       setChannelFormError("Webhook channels require a Pro plan.");
+      openNotificationsPaywall("notifications_webhook_lock");
       return;
     }
 
@@ -491,6 +530,7 @@ export default function NotificationsSettingsPage() {
     }
     if (ruleLimitReached) {
       setRuleFormError("Rule limit reached for your plan.");
+      openNotificationsPaywall("notifications_rule_limit");
       return;
     }
     if (!ruleForm.channelIds.length) {
@@ -510,6 +550,7 @@ export default function NotificationsSettingsPage() {
     }
     if (requiresConversion && !advancedAlerting) {
       setRuleFormError("Conversion drop alerts require a Pro plan.");
+      openNotificationsPaywall("notifications_conversion_alert");
       return;
     }
     if (requiresConversion) {
@@ -596,10 +637,6 @@ export default function NotificationsSettingsPage() {
     }
   };
 
-  const handleUpgrade = () => {
-    window.location.assign(UPGRADE_PATH);
-  };
-
   return (
     <div className="stack">
       <section className="card notifications-header">
@@ -649,18 +686,32 @@ export default function NotificationsSettingsPage() {
       {activeTab === "channels" && (
         <>
           {(channelLimitReached || !advancedAlerting) && (
-            <section className="card notifications-upgrade">
-              <div className="notifications-upgrade-header">
-                <strong>Upgrade for advanced notifications</strong>
-                <button className="btn primary" onClick={handleUpgrade}>
-                  Upgrade
-                </button>
-              </div>
-              <ul className="notifications-upgrade-list">
-                {!advancedAlerting && <li>Webhook integrations</li>}
-                {channelLimitReached && <li>More notification channels</li>}
-              </ul>
-            </section>
+            <PaywallCard
+              title="Upgrade for advanced notifications"
+              subtitle="Add webhooks and scale alert channels across teams."
+              bullets={[
+                !advancedAlerting ? "Webhook integrations" : null,
+                channelLimitReached ? "Higher channel limits" : null,
+              ].filter(Boolean)}
+              previewTitle="Preview"
+              preview={
+                <div className="paywall-preview-list">
+                  <div className="paywall-preview-row">
+                    <span>Slack + Webhook</span>
+                    <span>Pro</span>
+                  </div>
+                  <div className="paywall-preview-row">
+                    <span>Unlimited channels</span>
+                    <span>Business</span>
+                  </div>
+                </div>
+              }
+              featureKey="advanced_alerting"
+              source="notifications_channels_card"
+              planKey="pro"
+              showDismiss={false}
+              className="card"
+            />
           )}
 
           <section className="notifications-grid">
@@ -915,18 +966,32 @@ export default function NotificationsSettingsPage() {
       {activeTab === "rules" && (
         <>
           {(ruleLimitReached || !advancedAlerting) && (
-            <section className="card notifications-upgrade">
-              <div className="notifications-upgrade-header">
-                <strong>Upgrade for advanced rules</strong>
-                <button className="btn primary" onClick={handleUpgrade}>
-                  Upgrade
-                </button>
-              </div>
-              <ul className="notifications-upgrade-list">
-                {!advancedAlerting && <li>Conversion drop alerts</li>}
-                {ruleLimitReached && <li>More notification rules</li>}
-              </ul>
-            </section>
+            <PaywallCard
+              title="Upgrade for advanced rules"
+              subtitle="Pro unlocks conversion alerts and higher rule limits."
+              bullets={[
+                !advancedAlerting ? "Conversion drop alerts" : null,
+                ruleLimitReached ? "Higher rule limits for alerting" : null,
+              ].filter(Boolean)}
+              previewTitle="Preview"
+              preview={
+                <div className="paywall-preview-list">
+                  <div className="paywall-preview-row">
+                    <span>Conversion drop alert</span>
+                    <span>Pro</span>
+                  </div>
+                  <div className="paywall-preview-row">
+                    <span>Revenue leak threshold</span>
+                    <span>Pro</span>
+                  </div>
+                </div>
+              }
+              featureKey="advanced_alerting"
+              source="notifications_rules_card"
+              planKey="pro"
+              showDismiss={false}
+              className="card"
+            />
           )}
 
           <section className="notifications-grid">
@@ -1328,6 +1393,11 @@ export default function NotificationsSettingsPage() {
           )}
         </section>
       )}
+      <PaywallModal
+        open={Boolean(paywallConfig)}
+        onClose={closePaywall}
+        {...(paywallConfig || {})}
+      />
     </div>
   );
 }

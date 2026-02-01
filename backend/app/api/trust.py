@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
+from app.core.config import settings
 from app.core.db import get_db
 from app.models.enums import RoleEnum
 from app.models.trust_scoring import TrustSnapshot
@@ -48,7 +49,7 @@ def list_trust_snapshots(
     ctx=Depends(require_role_in_tenant([RoleEnum.VIEWER], user_resolver=get_current_user)),
 ):
     tenant = _resolve_tenant(db, ctx.tenant_id)
-    include_demo = bool(include_demo and tenant.is_demo_mode)
+    include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     query = db.query(TrustSnapshot).filter(TrustSnapshot.tenant_id == tenant.id)
     if not include_demo:
         query = query.filter(TrustSnapshot.is_demo.is_(False))

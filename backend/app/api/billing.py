@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_current_user
 from app.billing.catalog import get_plan_name, get_price_id, normalize_plan_key, plan_key_from_price_id
 from app.core.config import settings
+from app.core.referrals import process_referral_conversion
+from app.core.affiliates import process_affiliate_conversion, void_affiliate_commission
 from app.core.db import get_db
 from app.crud.plans import get_plan_by_name
 from app.crud.subscriptions import (
@@ -161,6 +163,13 @@ def create_checkout_session(
         session_params["customer"] = customer_id
 
     session = stripe.checkout.Session.create(**session_params)
+    create_audit_log(
+        db,
+        tenant_id=tenant_id,
+        username=None,
+        event=f"billing.checkout.started:{plan_key}",
+        request=request,
+    )
     return CheckoutSessionResponse(checkout_url=session.url)
 
 
@@ -241,6 +250,18 @@ async def stripe_webhook(
                     event=f"billing.checkout.completed:{plan_key}",
                     request=request,
                 )
+                try:
+                    process_referral_conversion(db, new_tenant_id=tenant_id)
+                except Exception:
+                    pass
+                try:
+                    process_affiliate_conversion(
+                        db,
+                        tenant_id=tenant_id,
+                        stripe_subscription_id=stripe_subscription_id,
+                    )
+                except Exception:
+                    pass
 
     elif event_type in {
         "customer.subscription.created",
@@ -284,6 +305,29 @@ async def stripe_webhook(
                     event=f"billing.subscription.{event_type}:{plan_key}",
                     request=request,
                 )
+                if status_value in {"active", "trialing"}:
+                    try:
+                        process_referral_conversion(db, new_tenant_id=tenant_id)
+                    except Exception:
+                        pass
+                    try:
+                        process_affiliate_conversion(
+                            db,
+                            tenant_id=tenant_id,
+                            stripe_subscription_id=stripe_subscription_id,
+                        )
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        void_affiliate_commission(
+                            db,
+                            tenant_id=tenant_id,
+                            stripe_subscription_id=stripe_subscription_id,
+                            reason=f\"subscription_{status_value}\",
+                        )
+                    except Exception:
+                        pass
 
     elif event_type == "invoice.paid":
         stripe_subscription_id = data_object.get("subscription")
@@ -301,6 +345,14 @@ async def stripe_webhook(
                 event="billing.invoice.paid",
                 request=request,
             )
+            try:
+                process_affiliate_conversion(
+                    db,
+                    tenant_id=subscription.tenant_id,
+                    stripe_subscription_id=stripe_subscription_id,
+                )
+            except Exception:
+                pass
     elif event_type == "invoice.payment_failed":
         stripe_subscription_id = data_object.get("subscription")
         subscription = get_subscription_by_stripe_ids(
@@ -317,5 +369,14 @@ async def stripe_webhook(
                 event="billing.invoice.payment_failed",
                 request=request,
             )
+            try:
+                void_affiliate_commission(
+                    db,
+                    tenant_id=subscription.tenant_id,
+                    stripe_subscription_id=stripe_subscription_id,
+                    reason="invoice_payment_failed",
+                )
+            except Exception:
+                pass
 
     return {"received": True}

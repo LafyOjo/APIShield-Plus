@@ -4,6 +4,7 @@ import TourOverlay from "./TourOverlay";
 import { useTour } from "./useTour";
 import DemoDataToggle from "./DemoDataToggle";
 import { useDemoData } from "./useDemoData";
+import PaywallCard from "./components/PaywallCard";
 
 const TIME_RANGES = [
   { value: "24h", label: "Last 24 hours", days: 1 },
@@ -506,13 +507,37 @@ export default function RevenueLeakHeatmapPage() {
       </section>
 
       {!leakEnabled && (
-        <section className="card">
-          <h3 className="section-title">Upgrade required</h3>
-          <p className="subtle">{leakUpgradeNote}</p>
-          <button className="btn primary" onClick={() => navigateTo("/billing")}>
-            View plans
-          </button>
-        </section>
+        <PaywallCard
+          title="Revenue Leak Heatmap is Pro"
+          subtitle={leakUpgradeNote}
+          bullets={[
+            "Rank leaking pages by lost revenue.",
+            "Connect trust signals to conversion drop-offs.",
+            "Investigate incidents with pre-filtered context.",
+          ]}
+          previewTitle="Preview"
+          preview={
+            <div className="paywall-preview-list">
+              <div className="paywall-preview-row">
+                <span>/checkout</span>
+                <span>$2,400</span>
+              </div>
+              <div className="paywall-preview-row">
+                <span>/pricing</span>
+                <span>$1,120</span>
+              </div>
+              <div className="paywall-preview-row">
+                <span>/login</span>
+                <span>$680</span>
+              </div>
+            </div>
+          }
+          featureKey="revenue_leaks"
+          source="revenue_leak_heatmap"
+          planKey="pro"
+          showDismiss={false}
+          className="card"
+        />
       )}
 
       <section className="card">

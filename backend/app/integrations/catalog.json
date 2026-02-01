@@ -1,0 +1,80 @@
+[
+  {
+    "key": "wordpress-plugin",
+    "name": "WordPress Plugin",
+    "category": "cms",
+    "description": "Install the APIShield+ WordPress plugin to auto-inject the agent and send security signals.",
+    "docs_url": "/dashboard/help?doc=integrations-wordpress",
+    "install_type": "plugin",
+    "is_featured": true,
+    "plan_required": null,
+    "install_url": "https://wordpress.org/plugins/apishield",
+    "copy_payload": null,
+    "stack_types": ["wordpress"]
+  },
+  {
+    "key": "shopify-app",
+    "name": "Shopify App",
+    "category": "ecommerce",
+    "description": "Connect Shopify storefronts and checkout flows with one-click installation.",
+    "docs_url": "/dashboard/help?doc=integrations-shopify",
+    "install_type": "app",
+    "is_featured": true,
+    "plan_required": "pro",
+    "install_url": "https://apps.shopify.com/apishield",
+    "copy_payload": null,
+    "stack_types": ["shopify"]
+  },
+  {
+    "key": "nextjs-middleware",
+    "name": "Next.js Middleware",
+    "category": "frontend",
+    "description": "Add lightweight middleware hooks for enhanced security telemetry in Next.js.",
+    "docs_url": "/dashboard/help?doc=integrations-nextjs",
+    "install_type": "snippet",
+    "is_featured": false,
+    "plan_required": null,
+    "install_url": null,
+    "copy_payload": "// middleware.ts\nimport { apiShieldMiddleware } from '@apishield/next';\n\nexport default apiShieldMiddleware({\n  publicKey: 'YOUR_PUBLIC_KEY',\n});",
+    "stack_types": ["nextjs", "react_spa"]
+  },
+  {
+    "key": "cloudflare-rules",
+    "name": "Cloudflare Rules",
+    "category": "security",
+    "description": "Deploy WAF rules and rate limits aligned to APIShield+ incident patterns.",
+    "docs_url": "/dashboard/help?doc=integrations-cloudflare",
+    "install_type": "config",
+    "is_featured": false,
+    "plan_required": "business",
+    "install_url": null,
+    "copy_payload": "# Cloudflare WAF Rules (starter)\n- expression: (http.request.uri.path contains \"/login\") and ip.src.rate > 100\n  action: block",
+    "stack_types": ["custom", "django", "rails", "laravel", "nextjs", "react_spa"]
+  },
+  {
+    "key": "nginx-rate-limit",
+    "name": "Nginx Rate Limit Snippet",
+    "category": "security",
+    "description": "Apply suggested rate limits at the edge using Nginx zones and bursts.",
+    "docs_url": "/dashboard/help?doc=integrations-nginx",
+    "install_type": "config",
+    "is_featured": false,
+    "plan_required": null,
+    "install_url": null,
+    "copy_payload": "# /etc/nginx/conf.d/apishield-rate-limit.conf\nlimit_req_zone $binary_remote_addr zone=login_zone:10m rate=10r/s;\n\nserver {\n  location /login {\n    limit_req zone=login_zone burst=20 nodelay;\n    proxy_pass http://app_upstream;\n  }\n}",
+    "stack_types": ["custom", "django", "rails", "laravel", "nextjs", "react_spa"]
+  },
+  {
+    "key": "zapier-webhooks",
+    "name": "Zapier / Webhook Recipes",
+    "category": "observability",
+    "description": "Send incidents and verification results to Zapier or webhook automation flows.",
+    "docs_url": "/dashboard/help?doc=integrations-zapier",
+    "install_type": "snippet",
+    "is_featured": false,
+    "plan_required": "pro",
+    "install_url": null,
+    "copy_payload": "POST https://hooks.zapier.com/hooks/catch/...\nContent-Type: application/json\n\n{\n  \"event\": \"incident_opened\",\n  \"tenant\": \"acme\",\n  \"severity\": \"high\"\n}",
+    "stack_types": []
+  }
+]

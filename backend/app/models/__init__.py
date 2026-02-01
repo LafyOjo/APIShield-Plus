@@ -40,6 +40,7 @@ from .notification_channels import NotificationChannel
 from .notification_deliveries import NotificationDelivery
 from .notification_rules import NotificationRule, NotificationRuleChannel
 from .user_profiles import UserProfile
+from .email_queue import EmailQueue
 from .backfill_runs import BackfillRun
 from .retention_runs import RetentionRun
 from .tenant_sso import TenantSSOConfig
@@ -47,6 +48,7 @@ from .tenant_scim import TenantSCIMConfig
 from .scim_mappings import SCIMExternalUserMap, SCIMExternalGroupMap
 from .status_page import StatusComponent, StatusIncident
 from .trust_scoring import TrustSnapshot, TrustFactorAgg
+from .trust_badges import TrustBadgeConfig
 from .revenue_leaks import RevenueLeakEstimate
 from .website_stack_profiles import WebsiteStackProfile
 from .remediation_playbooks import RemediationPlaybook
@@ -54,7 +56,14 @@ from .protection_presets import ProtectionPreset
 from .verification_runs import VerificationCheckRun
 from .onboarding_states import OnboardingState
 from .activation_metrics import ActivationMetric
+from .growth_metrics import GrowthSnapshot
 from .user_tour_states import UserTourState
+from .referrals import ReferralProgramConfig, ReferralInvite, ReferralRedemption, CreditLedger
+from .affiliates import AffiliatePartner, AffiliateAttribution, AffiliateCommissionLedger
+from .partners import PartnerUser, PartnerLead
+from .feature_flags import FeatureFlag, Experiment, ExperimentAssignment
+from .integration_directory import IntegrationListing, IntegrationInstallEvent
+from .marketplace import MarketplaceTemplate, TemplateImportEvent
 
 __all__ = [
     "Alert",
@@ -103,6 +112,7 @@ __all__ = [
     "NotificationRule",
     "NotificationRuleChannel",
     "UserProfile",
+    "EmailQueue",
     "BackfillRun",
     "RetentionRun",
     "TenantSSOConfig",
@@ -113,6 +123,7 @@ __all__ = [
     "StatusIncident",
     "TrustSnapshot",
     "TrustFactorAgg",
+    "TrustBadgeConfig",
     "RevenueLeakEstimate",
     "WebsiteStackProfile",
     "RemediationPlaybook",
@@ -120,5 +131,22 @@ __all__ = [
     "VerificationCheckRun",
     "OnboardingState",
     "ActivationMetric",
+    "GrowthSnapshot",
     "UserTourState",
+    "ReferralProgramConfig",
+    "ReferralInvite",
+    "ReferralRedemption",
+    "CreditLedger",
+    "AffiliatePartner",
+    "AffiliateAttribution",
+    "AffiliateCommissionLedger",
+    "PartnerUser",
+    "PartnerLead",
+    "FeatureFlag",
+    "Experiment",
+    "ExperimentAssignment",
+    "IntegrationListing",
+    "IntegrationInstallEvent",
+    "MarketplaceTemplate",
+    "TemplateImportEvent",
 ]

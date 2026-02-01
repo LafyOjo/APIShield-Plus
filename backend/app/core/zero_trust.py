@@ -33,8 +33,10 @@ ALLOWED_PATHS = {
     "/auth/saml/metadata",
     "/auth/saml/acs",
     "/openapi.json",
+    "/openapi.yaml",
     "/docs",
     "/docs/oauth2-redirect",
+    "/docs/openapi.yaml",
     "/metrics",
     "/api/audit/log",  # logs need to flow even if API key is missing
     "/ingest/browser",
@@ -42,6 +44,14 @@ ALLOWED_PATHS = {
     "/api/v1/ingest/browser",
     "/api/status/components",
     "/api/status/incidents",
+    "/public/badge.js",
+    "/public/badge/data",
+    "/public/integrations",
+    "/public/marketplace",
+}
+
+ALLOWED_PREFIXES = {
+    "/public/marketplace/",
 }
 
 
@@ -60,7 +70,9 @@ class ZeroTrustMiddleware(BaseHTTPMiddleware):
 
         # Step 3: Allow public paths to bypass API key enforcement.
         # Without this, even login and docs would fail with 401.
-        if request.url.path in ALLOWED_PATHS:
+        if request.url.path in ALLOWED_PATHS or any(
+            request.url.path.startswith(prefix) for prefix in ALLOWED_PREFIXES
+        ):
             return await call_next(request)
 
         # Step 4: Enforce the API key by checking the X-API-Key

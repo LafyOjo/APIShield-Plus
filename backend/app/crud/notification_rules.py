@@ -15,6 +15,7 @@ ALLOWED_TRIGGER_TYPES = {
     "conversion_drop_over_threshold",
     "login_fail_spike",
     "threat_spike",
+    "js_error_spike",
     "new_country_login",
     "integrity_signal_detected",
 }

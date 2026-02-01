@@ -5,6 +5,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
+from app.core.config import settings
 from app.core.db import get_db
 from app.core.entitlements import resolve_effective_entitlements
 from app.crud.tenants import get_tenant_by_id, get_tenant_by_slug
@@ -132,7 +133,7 @@ def list_incidents(
 ):
     tenant = _resolve_tenant(db, ctx.tenant_id)
     tenant_id = tenant.id
-    include_demo = bool(include_demo and tenant.is_demo_mode)
+    include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     query = db.query(Incident).filter(Incident.tenant_id == tenant_id)
     if not include_demo:
         query = query.filter(Incident.is_demo.is_(False))
@@ -206,7 +207,7 @@ def get_incident(
 ):
     tenant = _resolve_tenant(db, ctx.tenant_id)
     tenant_id = tenant.id
-    include_demo = bool(include_demo and tenant.is_demo_mode)
+    include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     incident = _get_incident_or_404(
         db,
         tenant_id=tenant_id,
@@ -413,7 +414,7 @@ def generate_incident_prescriptions(
 ):
     tenant = _resolve_tenant(db, ctx.tenant_id)
     tenant_id = tenant.id
-    include_demo = bool(include_demo and tenant.is_demo_mode)
+    include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     incident = _get_incident_or_404(
         db,
         tenant_id=tenant_id,
@@ -492,7 +493,7 @@ def update_incident(
 ):
     tenant = _resolve_tenant(db, ctx.tenant_id)
     tenant_id = tenant.id
-    include_demo = bool(include_demo and tenant.is_demo_mode)
+    include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     incident = _get_incident_or_404(
         db,
         tenant_id=tenant_id,
@@ -525,7 +526,7 @@ def export_incident_report(
 ):
     tenant = _resolve_tenant(db, ctx.tenant_id)
     tenant_id = tenant.id
-    include_demo = bool(include_demo and tenant.is_demo_mode)
+    include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     incident = _get_incident_or_404(
         db,
         tenant_id=tenant_id,
@@ -560,7 +561,7 @@ def list_verification_runs(
 ):
     tenant = _resolve_tenant(db, ctx.tenant_id)
     tenant_id = tenant.id
-    include_demo = bool(include_demo and tenant.is_demo_mode)
+    include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     _get_incident_or_404(
         db,
         tenant_id=tenant_id,
@@ -601,7 +602,7 @@ def run_verification(
 ):
     tenant = _resolve_tenant(db, ctx.tenant_id)
     tenant_id = tenant.id
-    include_demo = bool(include_demo and tenant.is_demo_mode)
+    include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     incident = _get_incident_or_404(
         db,
         tenant_id=tenant_id,

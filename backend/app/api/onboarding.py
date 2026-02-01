@@ -10,9 +10,15 @@ from app.crud.onboarding import (
     mark_step_completed,
     maybe_mark_alert_step,
 )
+from app.core.onboarding_emails import queue_upgrade_nudge
 from app.crud.websites import get_website
+from app.crud.audit import create_audit_log
 from app.models.enums import RoleEnum
-from app.schemas.onboarding import OnboardingStateRead, OnboardingStepComplete
+from app.schemas.onboarding import (
+    FeatureLockedEvent,
+    OnboardingStateRead,
+    OnboardingStepComplete,
+)
 from app.tenancy.dependencies import get_current_membership, require_role_in_tenant
 from app.tenancy.errors import TenantNotFound
 
@@ -128,3 +134,33 @@ def complete_step(
     db.commit()
     db.refresh(state)
     return _serialize_state(state)
+
+
+@router.post("/feature-locked")
+def feature_locked(
+    payload: FeatureLockedEvent,
+    db=Depends(get_db),
+    current_user=Depends(get_current_user),
+    ctx=Depends(require_role_in_tenant([RoleEnum.VIEWER], user_resolver=get_current_user)),
+):
+    membership = get_current_membership(db, current_user, ctx.tenant_id)
+    feature_key = (payload.feature_key or "").strip()
+    if not feature_key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="feature_key is required")
+    action = (payload.action or "shown").strip() or "shown"
+    source = (payload.source or "").strip()
+    event_suffix = f"{feature_key}:{source}" if source else feature_key
+    create_audit_log(
+        db,
+        tenant_id=membership.tenant_id,
+        username=current_user.email,
+        event=f"paywall.{action}:{event_suffix}",
+    )
+    queue_upgrade_nudge(
+        db,
+        tenant_id=membership.tenant_id,
+        user_id=current_user.id,
+        feature_key=feature_key,
+        source=payload.source or action,
+    )
+    return {"ok": True}

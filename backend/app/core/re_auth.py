@@ -22,8 +22,9 @@ REAUTH_METHODS = tuple(m.strip().upper() for m in _METHODS.split(",") if m.strip
 # health checks, docs, login/token endpoints, scoring, and audit.
 # Keeping this list explicit avoids accidental lockouts.
 SKIP_PATHS = {
-    "/ping", "/health", "/healthz", "/metrics", "/docs", "/openapi.json",
+    "/ping", "/health", "/healthz", "/metrics", "/docs", "/openapi.json", "/openapi.yaml",
     "/favicon.ico",
+    "/docs/openapi.yaml",
     "/login", "/register", "/api/token",
     "/auth/oidc/status",
     "/auth/oidc/start",

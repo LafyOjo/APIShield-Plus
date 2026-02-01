@@ -199,6 +199,8 @@ def seed_demo_data(
     force: bool = False,
     now: datetime | None = None,
 ) -> DemoSeedResult:
+    if settings.LAUNCH_MODE:
+        raise ValueError("Demo seeding is disabled in launch mode")
     current = now or utcnow()
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if not tenant:

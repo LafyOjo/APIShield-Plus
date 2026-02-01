@@ -32,6 +32,9 @@ from app.crud.users import get_user_by_username
 from app.crud.audit import create_audit_log
 from app.crud.policies import get_policy_for_user
 from app.crud.tenant_sso import is_sso_required_for_user
+from app.core.onboarding_emails import queue_welcome_email
+from app.core.referrals import record_referral_redemption
+from app.core.affiliates import record_affiliate_attribution
 from app.core.events import log_event
 from app.models.enums import MembershipStatusEnum
 from app.models.memberships import Membership
@@ -161,6 +164,36 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
             )
         except Exception:
             # Silent fail - we don't want DemoShop errors to break core auth
+            pass
+
+    try:
+        queue_welcome_email(db, tenant=tenant, user=user)
+    except Exception:
+        # Never fail registration due to onboarding email issues.
+        pass
+
+    if user_in.referral_code:
+        try:
+            record_referral_redemption(
+                db,
+                code=user_in.referral_code,
+                new_tenant=tenant,
+                new_user=user,
+            )
+        except Exception:
+            # Never fail registration due to referral issues.
+            pass
+
+    if user_in.affiliate_code:
+        try:
+            record_affiliate_attribution(
+                db,
+                affiliate_code=user_in.affiliate_code,
+                tenant_id=tenant.id,
+                source_meta=user_in.affiliate_meta if isinstance(user_in.affiliate_meta, dict) else None,
+            )
+        except Exception:
+            # Never fail registration due to affiliate issues.
             pass
 
     return UserRegistrationResponse(

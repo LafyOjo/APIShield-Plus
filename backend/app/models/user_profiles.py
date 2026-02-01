@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Boolean
 from sqlalchemy.orm import relationship
 
 from app.core.db import Base
@@ -14,6 +14,7 @@ class UserProfile(Base):
     display_name = Column(String, nullable=True)
     avatar_url = Column(String, nullable=True)
     timezone = Column(String, nullable=True)
+    email_opt_out = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(
         DateTime,

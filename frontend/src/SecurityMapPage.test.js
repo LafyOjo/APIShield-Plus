@@ -180,3 +180,19 @@ test("test_geo_map_ui_shows_upgrade_cta_when_feature_disabled()", async () => {
   ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /upgrade/i })).toBeInTheDocument();
 });
+
+test("test_paywall_shown_on_locked_feature_access()", async () => {
+  localStorage.setItem(ACTIVE_TENANT_KEY, "acme");
+  mockApiFetch({
+    geoGranularity: "city",
+    summaryItems: [{ count: 12, country_code: "US" }],
+  });
+
+  render(<SecurityMapPage />);
+
+  const user = userEvent.setup();
+  const exportButton = await screen.findByRole("button", { name: /export csv/i });
+  await user.click(exportButton);
+
+  expect(await screen.findByText(/Unlock Geo Map Pro/i)).toBeInTheDocument();
+});

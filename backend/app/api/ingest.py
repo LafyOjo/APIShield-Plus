@@ -17,6 +17,7 @@ from app.core.db import get_db
 from app.core.entitlements import resolve_effective_entitlements
 from app.core.event_types import normalize_path
 from app.core.metrics import record_ingest_event, record_ingest_latency
+from app.core.onboarding_emails import queue_first_event_email
 from app.core.usage import get_or_create_current_period_usage, increment_storage
 from app.entitlements.enforcement import assert_limit
 from app.core.privacy import hash_ip
@@ -351,6 +352,11 @@ async def ingest_browser_event(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to ingest event",
             )
+
+        try:
+            queue_first_event_email(db, tenant_id=api_key.tenant_id)
+        except Exception:
+            logger.exception("Failed to queue first event email")
 
         if payload.stack_hints:
             try:

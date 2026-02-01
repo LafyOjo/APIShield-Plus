@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>APIShield+ Public API Docs</title>
+  <meta name="description" content="Public API documentation for APIShield+ including OpenAPI and SDK snippets.">
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f4ef;
+      --card: #ffffff;
+      --ink: #171717;
+      --accent: #1f5cff;
+      --muted: #5a5a5a;
+      --border: #e6e1d6;
+    }
+    body {
+      margin: 0;
+      font-family: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    header {
+      padding: 32px 6vw;
+      background: linear-gradient(135deg, #0f172a, #1e293b);
+      color: #f8fafc;
+    }
+    header h1 { margin: 0 0 8px; font-size: 32px; }
+    header p { margin: 0; color: #cbd5f5; }
+    main { padding: 24px 6vw 60px; }
+    section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+    }
+    h2 { margin-top: 0; }
+    .grid { display: grid; gap: 16px; }
+    .grid.two { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    code, pre {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 13px;
+    }
+    pre {
+      background: #0b1020;
+      color: #e2e8f0;
+      padding: 14px;
+      border-radius: 10px;
+      overflow-x: auto;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 10px;
+      border-radius: 999px;
+      background: #e2e8ff;
+      color: #1f5cff;
+      font-size: 12px;
+      font-weight: 600;
+      margin-right: 6px;
+    }
+    a { color: var(--accent); }
+    .note { color: var(--muted); font-size: 14px; }
+    .swagger-wrap { margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>APIShield+ Developer API</h1>
+    <p>Integrate ingestion, security signals, and trust analytics with clear, public documentation.</p>
+  </header>
+  <main>
+    <section>
+      <h2>Quickstart</h2>
+      <div class="grid two">
+        <div>
+          <p><span class="pill">1</span> Install the browser agent</p>
+          <pre>&lt;script async src="https://cdn.yourapp.com/agent.js" data-key="pk_xxx"&gt;&lt;/script&gt;</pre>
+          <p class="note">Public keys (pk_) identify a website. Keep secret keys (sk_) server-side.</p>
+        </div>
+        <div>
+          <p><span class="pill">2</span> Send a test security event</p>
+          <pre>curl -X POST https://api.apishield.plus/ingest/security \
+  -H "X-Api-Secret: sk_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ts": "2026-01-30T12:00:00Z",
+    "event_type": "login_failed",
+    "severity": "high",
+    "request_path": "/login",
+    "source": "server"
+  }'</pre>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Authentication</h2>
+      <ul>
+        <li><strong>Public ingestion</strong> uses <code>X-Api-Key: pk_...</code>.</li>
+        <li><strong>Security ingestion</strong> uses <code>X-Api-Secret: sk_...</code> or a bearer token.</li>
+        <li><strong>Dashboard APIs</strong> require a bearer JWT and <code>X-Tenant-ID</code>.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Rate limits</h2>
+      <p>Default limits are enforced per key and per IP hash. Responses return <code>429</code> with <code>Retry-After</code>.</p>
+      <ul>
+        <li>Browser ingest: 120 events/minute on Free.</li>
+        <li>Security ingest: stricter defaults to prevent abuse.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Key rotation</h2>
+      <p>Rotate keys from the dashboard. Public keys can be reissued per environment; secrets are shown once on creation.</p>
+      <p class="note">If you rotate a secret, update any server-side integrations that send security events.</p>
+    </section>
+
+    <section>
+      <h2>SDK snippets</h2>
+      <div class="grid two">
+        <div>
+          <h3>Node / Express</h3>
+          <pre>app.use((req, _res, next) =&gt; {
+  fetch("https://api.apishield.plus/ingest/security", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Api-Secret": process.env.API_SHIELD_SECRET,
+    },
+    body: JSON.stringify({
+      ts: new Date().toISOString(),
+      event_type: "login_failed",
+      severity: "medium",
+      request_path: req.path,
+      source: "server",
+    }),
+  }).catch(() =&gt; {});
+  next();
+});</pre>
+        </div>
+        <div>
+          <h3>Python</h3>
+          <pre>import requests
+requests.post(
+  "https://api.apishield.plus/ingest/security",
+  headers={"X-Api-Secret": "sk_xxx"},
+  json={
+    "ts": "2026-01-30T12:00:00Z",
+    "event_type": "login_failed",
+    "severity": "high",
+    "request_path": "/login",
+  },
+  timeout=2,
+)</pre>
+        </div>
+      </div>
+      <h3>WordPress (mu-plugin)</h3>
+      <pre>&lt;?php
+add_action('wp_login_failed', function($username) {
+  wp_remote_post('https://api.apishield.plus/ingest/security', [
+    'headers' =&gt; [
+      'Content-Type' =&gt; 'application/json',
+      'X-Api-Secret' =&gt; getenv('API_SHIELD_SECRET'),
+    ],
+    'body' =&gt; wp_json_encode([
+      'ts' =&gt; gmdate('c'),
+      'event_type' =&gt; 'login_failed',
+      'severity' =&gt; 'medium',
+      'request_path' =&gt; '/wp-login.php',
+    ]),
+  ]);
+});</pre>
+    </section>
+
+    <section>
+      <h2>Webhook signing (verification)</h2>
+      <p class="note">Use HMAC SHA256 with your channel signing secret to verify notification webhooks.</p>
+      <pre>const crypto = require("crypto");
+const expected = crypto
+  .createHmac("sha256", signingSecret)
+  .update(rawBody)
+  .digest("hex");
+if (signature !== expected) throw new Error("Invalid signature");</pre>
+    </section>
+
+    <section>
+      <h2>Error codes</h2>
+      <ul>
+        <li><strong>401</strong> Missing or invalid key/secret.</li>
+        <li><strong>403</strong> Feature gated or tenant access denied.</li>
+        <li><strong>404</strong> Tenant-scoped resource not found.</li>
+        <li><strong>429</strong> Rate limit exceeded.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>OpenAPI</h2>
+      <p class="note">Download the OpenAPI spec: <a href="/openapi.yaml">openapi.yaml</a></p>
+      <div class="swagger-wrap">
+        <div id="swagger-ui"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    window.addEventListener("load", function () {
+      SwaggerUIBundle({
+        url: "/openapi.yaml",
+        dom_id: "#swagger-ui",
+        presets: [SwaggerUIBundle.presets.apis],
+        layout: "BaseLayout"
+      });
+    });
+  </script>
+</body>
+</html>

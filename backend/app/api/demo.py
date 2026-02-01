@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
+from app.core.config import settings
 from app.core.db import get_db
 from app.jobs.seed_demo_data import seed_demo_data
 from app.models.enums import RoleEnum
@@ -18,6 +19,11 @@ def seed_demo(
     db: Session = Depends(get_db),
     ctx=Depends(require_role_in_tenant([RoleEnum.OWNER, RoleEnum.ADMIN], user_resolver=get_current_user)),
 ):
+    if settings.LAUNCH_MODE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Demo seeding is disabled in launch mode",
+        )
     try:
         result = seed_demo_data(
             db,

@@ -290,4 +290,15 @@ def create_incident_from_signal(
     db.add(incident)
     db.flush()
     attach_signal_to_incident(db, incident=incident, signal=signal)
+    try:
+        from app.core.onboarding_emails import queue_first_incident_email
+
+        queue_first_incident_email(
+            db,
+            tenant_id=tenant_id,
+            incident_id=incident.id,
+        )
+    except Exception:
+        # Do not block incident creation on email triggers.
+        pass
     return incident

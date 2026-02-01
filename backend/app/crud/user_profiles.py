@@ -37,6 +37,8 @@ def update_profile(
         profile.avatar_url = changes["avatar_url"]
     if "timezone" in changes and changes["timezone"] is not None:
         profile.timezone = changes["timezone"]
+    if "email_opt_out" in changes and changes["email_opt_out"] is not None:
+        profile.email_opt_out = bool(changes["email_opt_out"])
     db.commit()
     db.refresh(profile)
     return profile

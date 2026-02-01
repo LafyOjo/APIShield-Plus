@@ -368,7 +368,7 @@ def map_summary(
 ):
     tenant = _resolve_tenant(db, ctx.tenant_id)
     tenant_id = tenant.id
-    include_demo = bool(include_demo and tenant.is_demo_mode)
+    include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     category = _normalize_category(category)
     entitlements = resolve_effective_entitlements(db, tenant_id)
     features = entitlements.get("features", {})
@@ -499,7 +499,7 @@ def map_drilldown(
 ):
     tenant = _resolve_tenant(db, ctx.tenant_id)
     tenant_id = tenant.id
-    include_demo = bool(include_demo and tenant.is_demo_mode)
+    include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     category = _normalize_category(category)
     entitlements = resolve_effective_entitlements(db, tenant_id)
     features = entitlements.get("features", {})

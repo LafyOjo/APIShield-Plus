@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.security import decode_access_token, is_token_revoked
 from app.core.db import get_db
 from app.crud.users import get_user_by_username
+from app.models.partners import PartnerUser
 
 # OAuth2PasswordBearer is the standard FastAPI helper that looks for
 # an Authorization: Bearer <token> header. We point it to /api/token
@@ -73,6 +74,15 @@ async def get_current_user(
     user = get_user_by_username(db, username)
     if not user:
         raise credentials_exception
+    partner_user = (
+        db.query(PartnerUser)
+        .filter(PartnerUser.user_id == user.id)
+        .first()
+    )
+    if partner_user:
+        setattr(user, "is_partner_user", True)
+        setattr(user, "partner_id", partner_user.partner_id)
+        setattr(user, "partner_role", partner_user.role)
     if payload.get("support_mode"):
         support_tenant_id = payload.get("support_tenant_id")
         setattr(user, "support_mode", True)

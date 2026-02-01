@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func
@@ -15,6 +15,7 @@ from app.crud.audit import create_audit_log
 from app.crud.subscriptions import get_active_subscription_for_tenant
 from app.models.activation_metrics import ActivationMetric
 from app.models.behaviour_events import BehaviourEvent
+from app.models.audit_logs import AuditLog
 from app.models.data_exports import DataExportRun
 from app.models.incidents import Incident
 from app.models.memberships import Membership
@@ -23,9 +24,11 @@ from app.models.notification_rules import NotificationRule
 from app.models.retention_runs import RetentionRun
 from app.models.security_events import SecurityEvent
 from app.models.tenants import Tenant
+from app.models.growth_metrics import GrowthSnapshot
 from app.models.tenant_usage import TenantUsage
 from app.models.websites import Website
 from app.jobs.activation_metrics import run_activation_metrics_job
+from app.jobs.growth_metrics import run_growth_metrics_job
 from app.schemas.admin import (
     AdminHealthSummary,
     AdminIncidentSummary,
@@ -40,6 +43,11 @@ from app.schemas.activation_metrics import (
     ActivationMetricRead,
     ActivationMetricsResponse,
     ActivationSummary,
+)
+from app.schemas.growth_metrics import (
+    ChurnRiskItem,
+    GrowthDashboardResponse,
+    GrowthSnapshotRead,
 )
 
 
@@ -82,6 +90,128 @@ def _parse_iso(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _parse_days_since(value: str | None, *, now: datetime) -> int | None:
+    ts = _parse_iso(value)
+    if not ts:
+        return None
+    if ts.tzinfo is not None:
+        ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+    return max((now - ts).days, 0)
+
+
+def _serialize_growth_snapshot(snapshot: GrowthSnapshot) -> GrowthSnapshotRead:
+    return GrowthSnapshotRead(
+        snapshot_date=snapshot.snapshot_date,
+        signups=snapshot.signups,
+        activated=snapshot.activated,
+        onboarding_completed=snapshot.onboarding_completed,
+        first_incident=snapshot.first_incident,
+        first_prescription=snapshot.first_prescription,
+        upgraded=snapshot.upgraded,
+        churned=snapshot.churned,
+        avg_time_to_first_event_seconds=snapshot.avg_time_to_first_event_seconds,
+        funnel=snapshot.funnel_json if isinstance(snapshot.funnel_json, dict) else None,
+        cohorts=snapshot.cohort_json if isinstance(snapshot.cohort_json, list) else None,
+        paywall=snapshot.paywall_json if isinstance(snapshot.paywall_json, list) else None,
+    )
+
+
+def _build_churn_risk_list(db: Session, *, limit: int = 20) -> list[ChurnRiskItem]:
+    now = datetime.utcnow()
+    tenants = (
+        db.query(Tenant)
+        .filter(Tenant.is_demo_mode.is_(False))
+        .order_by(Tenant.created_at.desc())
+        .limit(500)
+        .all()
+    )
+    tenant_ids = [tenant.id for tenant in tenants]
+    if not tenant_ids:
+        return []
+
+    activation_metrics = (
+        db.query(ActivationMetric)
+        .filter(ActivationMetric.tenant_id.in_(tenant_ids))
+        .all()
+    )
+    metric_map = {metric.tenant_id: metric for metric in activation_metrics}
+
+    last_login_map = dict(
+        db.query(AuditLog.tenant_id, func.max(AuditLog.timestamp))
+        .filter(
+            AuditLog.tenant_id.in_(tenant_ids),
+            AuditLog.event == "auth.login.success",
+        )
+        .group_by(AuditLog.tenant_id)
+        .all()
+    )
+
+    incident_cutoff = now - timedelta(days=7)
+    incident_query = db.query(Incident.tenant_id, func.count(Incident.id)).filter(
+        Incident.tenant_id.in_(tenant_ids),
+        Incident.status != "resolved",
+        Incident.created_at <= incident_cutoff,
+    )
+    if hasattr(Incident, "is_demo"):
+        incident_query = incident_query.filter(Incident.is_demo.is_(False))
+    open_incidents = dict(incident_query.group_by(Incident.tenant_id).all())
+
+    risk_items: list[tuple[int, ChurnRiskItem]] = []
+    for tenant in tenants:
+        metric = metric_map.get(tenant.id)
+        notes = metric.notes_json if metric and isinstance(metric.notes_json, dict) else {}
+        days_since_event = notes.get("days_since_last_event")
+        if not isinstance(days_since_event, int):
+            days_since_event = _parse_days_since(notes.get("last_event_at"), now=now)
+        last_login_at = last_login_map.get(tenant.id)
+        days_since_login = (
+            max((now - last_login_at).days, 0) if last_login_at else None
+        )
+        open_count = int(open_incidents.get(tenant.id, 0))
+
+        risk_score = 0
+        if days_since_event is None:
+            risk_score += 3
+        elif days_since_event >= 14:
+            risk_score += 2
+        elif days_since_event >= 7:
+            risk_score += 1
+
+        if days_since_login is None or days_since_login >= 14:
+            risk_score += 1
+
+        if open_count:
+            risk_score += 1
+
+        if risk_score >= 4:
+            risk_level = "high"
+        elif risk_score >= 2:
+            risk_level = "medium"
+        else:
+            risk_level = "low"
+
+        if risk_level == "low":
+            continue
+
+        risk_items.append(
+            (
+                risk_score,
+                ChurnRiskItem(
+                    tenant_id=tenant.id,
+                    tenant_name=tenant.name,
+                    tenant_slug=tenant.slug,
+                    days_since_last_event=days_since_event,
+                    days_since_last_login=days_since_login,
+                    open_incidents=open_count,
+                    risk_level=risk_level,
+                ),
+            )
+        )
+
+    risk_items.sort(key=lambda item: item[0], reverse=True)
+    return [item for _, item in risk_items[:limit]]
 
 
 @router.get("/tenants", response_model=list[AdminTenantListItem])
@@ -426,6 +556,49 @@ def list_activation_metrics(
         )
 
     return ActivationMetricsResponse(items=items, summary=summary)
+
+
+@router.get("/growth", response_model=GrowthDashboardResponse)
+def get_growth_dashboard(
+    request: Request,
+    days: int = Query(30, ge=1, le=120),
+    refresh: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_platform_admin()),
+):
+    if refresh:
+        run_growth_metrics_job(db, lookback_days=days)
+
+    snapshots = (
+        db.query(GrowthSnapshot)
+        .order_by(GrowthSnapshot.snapshot_date.desc())
+        .limit(days)
+        .all()
+    )
+    serialized = [_serialize_growth_snapshot(snapshot) for snapshot in snapshots]
+    latest = serialized[0] if serialized else None
+    cohorts = latest.cohorts if latest and latest.cohorts else []
+    paywall = latest.paywall if latest and latest.paywall else []
+    churn_risk = _build_churn_risk_list(db, limit=20)
+
+    if snapshots:
+        tenant = db.query(Tenant).order_by(Tenant.id.asc()).first()
+        if tenant:
+            _audit_admin_action(
+                db,
+                tenant_id=tenant.id,
+                username=current_user.username,
+                event="admin.growth_dashboard",
+                request=request,
+            )
+
+    return GrowthDashboardResponse(
+        snapshots=serialized,
+        latest=latest,
+        cohorts=cohorts,
+        paywall=paywall,
+        churn_risk=churn_risk,
+    )
 
 
 @router.post("/support/view-as", response_model=AdminSupportViewAsResponse)

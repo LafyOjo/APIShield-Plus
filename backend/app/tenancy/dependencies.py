@@ -141,6 +141,11 @@ def require_tenant_context(*, user_resolver: Optional[Callable] = None):
         db: Session = Depends(get_db),
         current_user=Depends(user_resolver),
     ) -> RequestContext:
+        if getattr(current_user, "is_partner_user", False) and not getattr(current_user, "support_mode", False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Partner accounts cannot access tenant resources",
+            )
         tenant_id = _resolve_tenant_id(request)
         request_id = getattr(request.state, "request_id", str(uuid4()))
         user_id = getattr(current_user, "id", None)

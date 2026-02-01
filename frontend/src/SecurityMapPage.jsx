@@ -5,6 +5,8 @@ import TourOverlay from "./TourOverlay";
 import { useTour } from "./useTour";
 import DemoDataToggle from "./DemoDataToggle";
 import { useDemoData } from "./useDemoData";
+import PaywallCard from "./components/PaywallCard";
+import PaywallModal from "./components/PaywallModal";
 
 const TIME_RANGES = [
   { value: "24h", label: "Last 24 hours", days: 1 },
@@ -14,7 +16,6 @@ const TIME_RANGES = [
 
 const GRANULARITY_LEVELS = { country: 0, city: 1, asn: 2 };
 const LIMITED_CATEGORIES = ["login", "integrity"];
-const UPGRADE_PATH = "/billing";
 
 const CATEGORY_OPTIONS = [
   { value: "login", label: "Logins" },
@@ -232,6 +233,7 @@ export default function SecurityMapPage() {
   const [drilldownLoading, setDrilldownLoading] = useState(false);
   const [drilldownError, setDrilldownError] = useState("");
   const [drilldownData, setDrilldownData] = useState(null);
+  const [paywallConfig, setPaywallConfig] = useState(null);
   const mapTour = useTour("map", activeTenant);
 
   const mapTourSteps = useMemo(
@@ -287,17 +289,61 @@ export default function SecurityMapPage() {
   const showUpgradeCard =
     geoEnabled && (mapPlanLimited || !hasAsnGranularity);
 
+  const mapPreview = useMemo(() => {
+    if (!summary || !summary.length) {
+      return <div className="subtle">Country-level activity preview will appear here.</div>;
+    }
+    return (
+      <div className="paywall-preview-list">
+        {summary.slice(0, 3).map((point, idx) => (
+          <div key={`${point.country_code || \"unknown\"}-${idx}`} className="paywall-preview-row">
+            <span>{point.city || point.country_code || \"Unknown\"}</span>
+            <span>{formatCount(point.count)}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }, [summary]);
+
+  const buildGeoPaywallConfig = useCallback(
+    (source, overrides = {}) => ({
+      title: "Unlock Geo Map Pro",
+      subtitle: "City/ASN breakdowns and extended history unlock deeper attribution.",
+      bullets: [
+        "City and ASN-level attribution for investigations.",
+        "Export full geo drilldowns for compliance evidence.",
+        "Unlock advanced filters across threats and anomalies.",
+      ],
+      previewTitle: "Country-level preview",
+      preview: mapPreview,
+      planKey: "pro",
+      featureKey: "geo_map",
+      source,
+      ...overrides,
+    }),
+    [mapPreview]
+  );
+
+  const openGeoPaywall = useCallback(
+    (source, overrides) => {
+      setPaywallConfig(buildGeoPaywallConfig(source, overrides));
+    },
+    [buildGeoPaywallConfig]
+  );
+
+  const closePaywall = useCallback(() => setPaywallConfig(null), []);
+
   const rangeValue = useMemo(() => resolveRangeValue(fromTs, toTs), [fromTs, toTs]);
   const rangeOptions = useMemo(() => {
     const options = TIME_RANGES.map((option) => {
       const isLimited = geoHistoryDays ? option.days > geoHistoryDays : false;
       const label = isLimited ? `${option.label} (Pro)` : option.label;
-      return { ...option, label, disabled: isLimited };
+      return { ...option, label, locked: isLimited };
     });
     if (rangeValue !== CUSTOM_RANGE_VALUE) return options;
     return [
       ...options,
-      { value: CUSTOM_RANGE_VALUE, label: "Custom range", days: null, disabled: true },
+      { value: CUSTOM_RANGE_VALUE, label: "Custom range", days: null, locked: true },
     ];
   }, [rangeValue, geoHistoryDays]);
 
@@ -339,7 +385,10 @@ export default function SecurityMapPage() {
       (option) => option.value === event.target.value
     );
     if (!selected) return;
-    if (geoHistoryDays && selected.days > geoHistoryDays) return;
+    if (geoHistoryDays && selected.days > geoHistoryDays) {
+      openGeoPaywall("security_map_range");
+      return;
+    }
     const nextWindow = buildTimeWindow(selected.days, new Date());
     updateTimeWindow(nextWindow.from, nextWindow.to);
   };
@@ -357,10 +406,6 @@ export default function SecurityMapPage() {
     } catch (err) {
       setShareStatus("Unable to copy link.");
     }
-  };
-
-  const handleUpgrade = () => {
-    window.location.assign(UPGRADE_PATH);
   };
 
   const handleExportCsv = () => {
@@ -401,6 +446,14 @@ export default function SecurityMapPage() {
     link.click();
     link.remove();
     URL.revokeObjectURL(link.href);
+  };
+
+  const handleExportClick = () => {
+    if (!canExportCsv) {
+      openGeoPaywall("security_map_export");
+      return;
+    }
+    handleExportCsv();
   };
 
   const navigateTo = useCallback((path) => {
@@ -919,28 +972,22 @@ export default function SecurityMapPage() {
           </div>
         </section>
 
-        <section className="card map-locked">
-          <div className="map-locked-content">
-            <div>
-              <div className="map-locked-kicker">Upgrade required</div>
-              <h3 className="section-title">Geo Map is a Pro feature</h3>
-              <p className="subtle">
-                Unlock advanced geo insights, attribution, and export-ready reports.
-              </p>
-            </div>
-            <div className="map-locked-preview">
-              <div className="map-locked-item">City-level activity clusters</div>
-              <div className="map-locked-item">ASN attribution and IP hash breakdowns</div>
-              <div className="map-locked-item">CSV export for security reviews</div>
-            </div>
-            <div className="map-locked-actions">
-              <button className="btn primary" onClick={handleUpgrade}>
-                Upgrade
-              </button>
-              <span className="help">Takes you to billing.</span>
-            </div>
-          </div>
-        </section>
+        <PaywallCard
+          title="Geo Map is a Pro feature"
+          subtitle="Unlock advanced geo insights, attribution, and export-ready reports."
+          bullets={[
+            "City-level activity clusters.",
+            "ASN attribution and IP hash breakdowns.",
+            "CSV exports for security reviews.",
+          ]}
+          previewTitle="Preview"
+          preview={mapPreview}
+          featureKey="geo_map"
+          source="security_map_locked"
+          planKey="pro"
+          showDismiss={false}
+          className="card"
+        />
       </div>
     );
   }
@@ -996,7 +1043,7 @@ export default function SecurityMapPage() {
                 <option
                   key={option.value}
                   value={option.value}
-                  disabled={option.disabled}
+                  data-locked={option.locked ? "true" : "false"}
                 >
                   {option.label}
                 </option>
@@ -1117,8 +1164,8 @@ export default function SecurityMapPage() {
           </button>
           <button
             className="btn secondary"
-            onClick={handleExportCsv}
-            disabled={!canExportCsv}
+            onClick={handleExportClick}
+            aria-disabled={!canExportCsv}
             title={!canExportCsv ? "Upgrade to export CSV." : "Export CSV"}
           >
             Export CSV
@@ -1133,23 +1180,18 @@ export default function SecurityMapPage() {
       </section>
 
       {showUpgradeCard && (
-        <section className="card map-upgrade">
-          <div className="map-upgrade-header">
-            <strong>Pro features available</strong>
-            <button className="btn primary" onClick={handleUpgrade}>
-              Upgrade
-            </button>
-          </div>
-          {upgradeItems.length ? (
-            <ul className="map-upgrade-list">
-              {upgradeItems.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          ) : (
-            <p className="subtle">Unlock additional geo insights.</p>
-          )}
-        </section>
+        <PaywallCard
+          title="Upgrade to Pro Geo Map"
+          subtitle="Unlock city and ASN attribution across your security activity."
+          bullets={upgradeItems.length ? upgradeItems : undefined}
+          previewTitle="Preview"
+          preview={mapPreview}
+          featureKey="geo_map"
+          source="security_map_card"
+          planKey="pro"
+          showDismiss={false}
+          className="card"
+        />
       )}
 
       <section className="map-grid">
@@ -1172,8 +1214,14 @@ export default function SecurityMapPage() {
             <div className="map-view-toggle">
               <button
                 className={`btn secondary ${viewMode === "map" ? "active" : ""}`}
-                onClick={() => setViewMode("map")}
-                disabled={!hasCityGranularity}
+                onClick={() => {
+                  if (!hasCityGranularity) {
+                    openGeoPaywall("security_map_view");
+                    return;
+                  }
+                  setViewMode("map");
+                }}
+                aria-disabled={!hasCityGranularity}
                 title={
                   !hasCityGranularity
                     ? "Upgrade to see city-level map markers."
@@ -1364,12 +1412,13 @@ export default function SecurityMapPage() {
                       )}
                     </div>
                     {mapPlanLimited ? (
-                      <div
-                        className="map-drilldown-empty"
+                      <button
+                        className="btn secondary small"
+                        onClick={() => openGeoPaywall("security_map_drilldown_city")}
                         title="Upgrade to see city-level attribution."
                       >
                         Upgrade to see city-level detail.
-                      </div>
+                      </button>
                     ) : drilldownData.cities?.length ? (
                       <div className="map-drilldown-list">
                         {drilldownData.cities.slice(0, 10).map((item, idx) => (
@@ -1400,12 +1449,13 @@ export default function SecurityMapPage() {
                       )}
                     </div>
                     {!hasAsnGranularity ? (
-                      <div
-                        className="map-drilldown-empty"
+                      <button
+                        className="btn secondary small"
+                        onClick={() => openGeoPaywall("security_map_drilldown_asn")}
                         title="Upgrade to see ASN-level attribution."
                       >
                         Upgrade to see ASN-level attribution.
-                      </div>
+                      </button>
                     ) : drilldownData.asns?.length ? (
                       <div className="map-drilldown-list">
                         {drilldownData.asns.slice(0, 10).map((item, idx) => (
@@ -1436,12 +1486,13 @@ export default function SecurityMapPage() {
                       )}
                     </div>
                     {!hasAsnGranularity ? (
-                      <div
-                        className="map-drilldown-empty"
+                      <button
+                        className="btn secondary small"
+                        onClick={() => openGeoPaywall("security_map_drilldown_ip_hash")}
                         title="Upgrade to see IP hash breakdown."
                       >
                         Upgrade to see IP hash breakdown.
-                      </div>
+                      </button>
                       ) : drilldownData.ip_hashes?.length ? (
                         <div className="map-drilldown-list">
                           {drilldownData.ip_hashes.slice(0, 10).map((item) => (
@@ -1521,6 +1572,11 @@ export default function SecurityMapPage() {
         isOpen={mapTour.open}
         onComplete={mapTour.complete}
         onDismiss={mapTour.dismiss}
+      />
+      <PaywallModal
+        open={Boolean(paywallConfig)}
+        onClose={closePaywall}
+        {...(paywallConfig || {})}
       />
     </div>
   );

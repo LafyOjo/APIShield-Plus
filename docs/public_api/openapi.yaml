@@ -1,0 +1,389 @@
+openapi: 3.0.3
+info:
+  title: APIShield+ Public API
+  version: "v1"
+  description: |
+    Public API for ingesting browser and security events, plus dashboard APIs
+    for incidents, notifications, and geo map summaries.
+servers:
+  - url: https://api.apishield.plus
+    description: Production
+  - url: http://localhost:8000
+    description: Local dev
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+    ApiSecretAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Secret
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    TenantHeader:
+      name: X-Tenant-ID
+      in: header
+      required: true
+      description: Active tenant slug or ID.
+      schema:
+        type: string
+  schemas:
+    IngestBrowserEvent:
+      type: object
+      required: [ts, type, url, event_id]
+      properties:
+        event_id:
+          type: string
+          example: evt_123
+        ts:
+          type: string
+          format: date-time
+        type:
+          type: string
+          example: page_view
+        url:
+          type: string
+        path:
+          type: string
+        referrer:
+          type: string
+        session_id:
+          type: string
+        user_id:
+          type: string
+        meta:
+          type: object
+    IngestBrowserResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        received_at:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+        deduped:
+          type: boolean
+    IngestSecurityEvent:
+      type: object
+      required: [ts, event_type]
+      properties:
+        ts:
+          type: string
+          format: date-time
+        event_type:
+          type: string
+          example: login_failed
+        severity:
+          type: string
+          example: high
+        request_path:
+          type: string
+        method:
+          type: string
+        status_code:
+          type: integer
+        user_identifier:
+          type: string
+        session_id:
+          type: string
+        source:
+          type: string
+        meta:
+          type: object
+    IngestSecurityResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        received_at:
+          type: string
+          format: date-time
+    MapSummaryPoint:
+      type: object
+      properties:
+        count:
+          type: integer
+        latitude:
+          type: number
+        longitude:
+          type: number
+        country_code:
+          type: string
+        region:
+          type: string
+        city:
+          type: string
+        asn_number:
+          type: integer
+        asn_org:
+          type: string
+    MapSummaryResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MapSummaryPoint"
+    MapDrilldownResponse:
+      type: object
+      properties:
+        countries:
+          type: array
+          items:
+            type: object
+            properties:
+              country_code:
+                type: string
+              count:
+                type: integer
+        cities:
+          type: array
+          items:
+            type: object
+        asns:
+          type: array
+          items:
+            type: object
+        ip_hashes:
+          type: array
+          items:
+            type: object
+        paths:
+          type: array
+          items:
+            type: object
+    IncidentListItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+        severity:
+          type: string
+        title:
+          type: string
+        category:
+          type: string
+        first_seen_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+    IncidentRead:
+      allOf:
+        - $ref: "#/components/schemas/IncidentListItem"
+        - type: object
+          properties:
+            summary:
+              type: string
+            evidence_json:
+              type: object
+    NotificationChannelRead:
+      type: object
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+        name:
+          type: string
+        is_enabled:
+          type: boolean
+    NotificationRuleRead:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        trigger_type:
+          type: string
+        is_enabled:
+          type: boolean
+paths:
+  /ingest/browser:
+    post:
+      summary: Ingest browser events
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestBrowserEvent"
+      responses:
+        "200":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestBrowserResponse"
+  /ingest/security:
+    post:
+      summary: Ingest security events
+      security:
+        - ApiSecretAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestSecurityEvent"
+      responses:
+        "200":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestSecurityResponse"
+  /api/v1/map/summary:
+    get:
+      summary: Geo map summary
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Geo summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MapSummaryResponse"
+  /api/v1/map/drilldown:
+    get:
+      summary: Geo map drilldown
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Drilldown data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MapDrilldownResponse"
+  /api/v1/incidents:
+    get:
+      summary: List incidents
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+      responses:
+        "200":
+          description: Incident list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IncidentListItem"
+  /api/v1/incidents/{incident_id}:
+    get:
+      summary: Get incident
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - in: path
+          name: incident_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Incident detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncidentRead"
+  /api/v1/notifications/channels:
+    get:
+      summary: List notification channels
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+      responses:
+        "200":
+          description: Notification channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NotificationChannelRead"
+    post:
+      summary: Create notification channel
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+      responses:
+        "200":
+          description: Notification channel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationChannelRead"
+  /api/v1/notifications/rules:
+    get:
+      summary: List notification rules
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+      responses:
+        "200":
+          description: Notification rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NotificationRuleRead"
+    post:
+      summary: Create notification rule
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+      responses:
+        "200":
+          description: Notification rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationRuleRead"

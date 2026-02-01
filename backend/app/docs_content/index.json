@@ -28,6 +28,34 @@
     "file": "integrations-shopify.md"
   },
   {
+    "slug": "integrations-nextjs",
+    "title": "Next.js integration",
+    "section": "Integrations",
+    "summary": "Add middleware hooks and verify telemetry in Next.js.",
+    "file": "integrations-nextjs.md"
+  },
+  {
+    "slug": "integrations-cloudflare",
+    "title": "Cloudflare rules",
+    "section": "Integrations",
+    "summary": "Apply WAF and rate limit rules aligned to incidents.",
+    "file": "integrations-cloudflare.md"
+  },
+  {
+    "slug": "integrations-nginx",
+    "title": "Nginx rate limiting",
+    "section": "Integrations",
+    "summary": "Deploy Nginx rate limiting snippets for login protection.",
+    "file": "integrations-nginx.md"
+  },
+  {
+    "slug": "integrations-zapier",
+    "title": "Zapier & webhook recipes",
+    "section": "Integrations",
+    "summary": "Send incidents to automation workflows with webhook recipes.",
+    "file": "integrations-zapier.md"
+  },
+  {
     "slug": "troubleshooting-events",
     "title": "Troubleshooting: no events showing",
     "section": "Troubleshooting",
