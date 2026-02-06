@@ -61,6 +61,7 @@ def upsert_badge_config(
     updates: dict[str, Any],
     *,
     plan_key: str | None,
+    branding_mode: str | None = None,
 ) -> TrustBadgeConfig:
     config = get_or_create_badge_config(db, tenant_id, website_id)
     if "is_enabled" in updates:
@@ -74,7 +75,7 @@ def upsert_badge_config(
     if "clickthrough_url" in updates:
         config.clickthrough_url = updates["clickthrough_url"]
 
-    apply_badge_plan_constraints(config, plan_key)
+    apply_badge_plan_constraints(config, plan_key, branding_mode)
     db.commit()
     db.refresh(config)
     return config

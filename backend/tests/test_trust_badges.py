@@ -87,6 +87,7 @@ def test_badge_public_js_serves_with_cache_headers():
     assert resp.status_code == 200
     assert "application/javascript" in resp.headers.get("content-type", "")
     assert "max-age" in resp.headers.get("cache-control", "")
+    assert resp.headers.get("etag")
 
 
 def test_badge_data_requires_valid_signature():
@@ -120,6 +121,7 @@ def test_badge_data_requires_valid_signature():
 
     resp = client.get(f"/public/badge/data?website_id={website_id}&ts={ts}&sig={sig}")
     assert resp.status_code == 200
+    assert resp.headers.get("etag")
     payload = resp.json()
     assert payload["trust_score"] == 92
 

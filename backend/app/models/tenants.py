@@ -44,6 +44,12 @@ class Tenant(TimestampMixin, Base):
         uselist=False,
         lazy="selectin",
     )
+    branding = relationship(
+        "TenantBranding",
+        back_populates="tenant",
+        uselist=False,
+        lazy="selectin",
+    )
     onboarding_state = relationship(
         "OnboardingState",
         back_populates="tenant",
@@ -109,6 +115,16 @@ class Tenant(TimestampMixin, Base):
     )
     behaviour_sessions = relationship(
         "BehaviourSession",
+        back_populates="tenant",
+        lazy="noload",
+    )
+    queued_jobs = relationship(
+        "JobQueue",
+        back_populates="tenant",
+        lazy="noload",
+    )
+    dead_letter_jobs = relationship(
+        "JobDeadLetter",
         back_populates="tenant",
         lazy="noload",
     )

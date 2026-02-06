@@ -8,12 +8,13 @@ import time
 from typing import Any
 
 from app.core.crypto import decrypt_json, encrypt_json
+from app.core.branding import normalize_badge_branding_mode
 from app.models.trust_badges import TrustBadgeConfig
 
 
 ALLOWED_BADGE_STYLES = {"light", "dark", "minimal"}
 FREE_BADGE_STYLES = {"light"}
-BADGE_BRANDING_REQUIRED_PLANS = {"", None, "free", "starter"}
+BADGE_BRANDING_REQUIRED_PLANS = {"", None, "free", "starter", "pro"}
 
 
 @dataclass
@@ -45,23 +46,38 @@ def normalize_style(value: str | None) -> str:
     return normalized if normalized in ALLOWED_BADGE_STYLES else "light"
 
 
-def apply_badge_plan_constraints(config: TrustBadgeConfig, plan_key: str | None) -> None:
+def apply_badge_plan_constraints(
+    config: TrustBadgeConfig,
+    plan_key: str | None,
+    branding_mode: str | None = None,
+) -> None:
     plan = (plan_key or "").strip().lower()
     config.style = normalize_style(config.style)
+    normalized_branding = normalize_badge_branding_mode(branding_mode)
     if plan in BADGE_BRANDING_REQUIRED_PLANS:
         config.show_branding = True
         if config.style not in FREE_BADGE_STYLES:
             config.style = "light"
+    if normalized_branding in {"your_brand", "co_brand"}:
+        config.show_branding = True
 
 
-def apply_badge_policy_to_payload(payload: dict[str, Any], plan_key: str | None) -> dict[str, Any]:
+def apply_badge_policy_to_payload(
+    payload: dict[str, Any],
+    plan_key: str | None,
+    *,
+    branding_mode: str | None = None,
+) -> dict[str, Any]:
     plan = (plan_key or "").strip().lower()
     normalized = normalize_style(payload.get("style"))
     show_branding = bool(payload.get("show_branding", True))
+    normalized_branding = normalize_badge_branding_mode(branding_mode)
     if plan in BADGE_BRANDING_REQUIRED_PLANS:
         show_branding = True
         if normalized not in FREE_BADGE_STYLES:
             normalized = "light"
+    if normalized_branding in {"your_brand", "co_brand"}:
+        show_branding = True
     payload["style"] = normalized
     payload["show_branding"] = show_branding
     return payload

@@ -123,6 +123,76 @@
     </section>
 
     <section>
+      <h2>Trust score proof (public)</h2>
+      <p>Fetch a signed trust score for procurement workflows and verify the signature locally.</p>
+      <div class="grid two">
+        <div>
+          <p><span class="pill">1</span> Get the signed score</p>
+          <pre>curl "https://api.apishield.plus/public/score/v1?website_id=123"</pre>
+          <p class="note">Responses include <code>X-Proof-Signature</code> and <code>X-Proof-Key-Id</code> headers.</p>
+        </div>
+        <div>
+          <p><span class="pill">2</span> Fetch the public key</p>
+          <pre>curl "https://api.apishield.plus/public/score/keys"</pre>
+          <p class="note">Match <code>proof_key_id</code> in the body to select the correct public key.</p>
+        </div>
+      </div>
+      <div class="grid two">
+        <div>
+          <h3>Node (Ed25519 verify)</h3>
+          <pre>import nacl from "tweetnacl";
+import base64url from "base64url";
+
+function canonicalize(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalize).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort()
+      .map((key) =&gt; `"${key}":${canonicalize(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+const resp = await fetch("https://api.apishield.plus/public/score/v1?website_id=123");
+const payload = await resp.json();
+const signature = resp.headers.get("X-Proof-Signature");
+const keyResp = await fetch("https://api.apishield.plus/public/score/keys");
+const { public_key } = await keyResp.json();
+
+const ok = nacl.sign.detached.verify(
+  new TextEncoder().encode(canonicalize(payload)),
+  base64url.toBuffer(signature),
+  base64url.toBuffer(public_key)
+);
+if (!ok) throw new Error("Invalid proof");</pre>
+        </div>
+        <div>
+          <h3>Python (Ed25519 verify)</h3>
+          <pre>import base64
+import json
+import requests
+from nacl.signing import VerifyKey
+
+resp = requests.get("https://api.apishield.plus/public/score/v1", params={"website_id": 123})
+payload = resp.json()
+signature = resp.headers["X-Proof-Signature"]
+
+key_resp = requests.get("https://api.apishield.plus/public/score/keys")
+public_key = key_resp.json()["public_key"]
+
+def b64url_decode(value: str) -&gt; bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+VerifyKey(b64url_decode(public_key)).verify(canonical, b64url_decode(signature))</pre>
+        </div>
+      </div>
+    </section>
+
+    <section>
       <h2>SDK snippets</h2>
       <div class="grid two">
         <div>

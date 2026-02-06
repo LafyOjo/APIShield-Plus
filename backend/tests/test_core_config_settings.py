@@ -47,12 +47,35 @@ def _load_settings(monkeypatch, extra_env=None):
         "INGEST_ABUSE_BAN_THRESHOLD",
         "INGEST_ABUSE_WINDOW_SECONDS",
         "INGEST_ABUSE_BAN_SECONDS",
+        "INGEST_MAX_BATCH_EVENTS",
+        "INGEST_SAMPLING_DEFAULT_RATE",
+        "CACHE_BACKEND",
+        "CACHE_NAMESPACE",
+        "CACHE_DEFAULT_TTL_SECONDS",
+        "CACHE_TTL_MAP_SUMMARY",
+        "CACHE_TTL_MAP_DRILLDOWN",
+        "CACHE_TTL_REVENUE_LEAKS",
+        "CACHE_TTL_TRUST_SNAPSHOTS",
+        "CACHE_TTL_PORTFOLIO_SUMMARY",
+        "CACHE_TTL_INCIDENTS_LIST",
+        "CACHE_TTL_INCIDENT_DETAIL",
+        "REDIS_URL",
         "GEO_PROVIDER",
         "GEO_DB_PATH",
         "GEO_ASN_DB_PATH",
         "GEO_API_KEY",
         "GEO_API_BASE_URL",
         "GEO_ENRICHMENT_TTL_DAYS",
+        "JOB_QUEUE_LOCK_TIMEOUT_SECONDS",
+        "JOB_QUEUE_POLL_INTERVAL_SECONDS",
+        "QUEUE_TENANT_RPM_STANDARD",
+        "QUEUE_TENANT_BURST_STANDARD",
+        "QUEUE_TENANT_MAX_IN_FLIGHT_STANDARD",
+        "QUEUE_TENANT_RPM_BULK",
+        "QUEUE_TENANT_BURST_BULK",
+        "QUEUE_TENANT_MAX_IN_FLIGHT_BULK",
+        "CHAOS_DB_LATENCY_MS",
+        "CHAOS_CACHE_DOWN",
         "ZERO_TRUST_API_KEY",
         "FRONTEND_BASE_URL",
         "SSO_STATE_TTL_SECONDS",
@@ -120,12 +143,35 @@ def test_settings_defaults(monkeypatch):
     assert cfg.INGEST_ABUSE_BAN_THRESHOLD == 10
     assert cfg.INGEST_ABUSE_WINDOW_SECONDS == 60
     assert cfg.INGEST_ABUSE_BAN_SECONDS == 900
+    assert cfg.INGEST_MAX_BATCH_EVENTS == 50
+    assert cfg.INGEST_SAMPLING_DEFAULT_RATE == 1.0
+    assert cfg.CACHE_BACKEND == "memory"
+    assert cfg.CACHE_NAMESPACE == "apishield"
+    assert cfg.CACHE_DEFAULT_TTL_SECONDS == 60
+    assert cfg.CACHE_TTL_MAP_SUMMARY == 60
+    assert cfg.CACHE_TTL_MAP_DRILLDOWN == 60
+    assert cfg.CACHE_TTL_REVENUE_LEAKS == 60
+    assert cfg.CACHE_TTL_TRUST_SNAPSHOTS == 60
+    assert cfg.CACHE_TTL_PORTFOLIO_SUMMARY == 60
+    assert cfg.CACHE_TTL_INCIDENTS_LIST == 30
+    assert cfg.CACHE_TTL_INCIDENT_DETAIL == 30
+    assert cfg.REDIS_URL is None
     assert cfg.GEO_PROVIDER == "local"
     assert cfg.GEO_DB_PATH == "/data/geo/GeoLite2-City.mmdb"
     assert cfg.GEO_ASN_DB_PATH == "/data/geo/GeoLite2-ASN.mmdb"
     assert cfg.GEO_API_KEY is None
     assert cfg.GEO_API_BASE_URL is None
     assert cfg.GEO_ENRICHMENT_TTL_DAYS == 30
+    assert cfg.JOB_QUEUE_LOCK_TIMEOUT_SECONDS == 300
+    assert cfg.JOB_QUEUE_POLL_INTERVAL_SECONDS == 2
+    assert cfg.QUEUE_TENANT_RPM_STANDARD == 60
+    assert cfg.QUEUE_TENANT_BURST_STANDARD == 5
+    assert cfg.QUEUE_TENANT_MAX_IN_FLIGHT_STANDARD == 1
+    assert cfg.QUEUE_TENANT_RPM_BULK == 10
+    assert cfg.QUEUE_TENANT_BURST_BULK == 2
+    assert cfg.QUEUE_TENANT_MAX_IN_FLIGHT_BULK == 1
+    assert cfg.CHAOS_DB_LATENCY_MS == 0
+    assert cfg.CHAOS_CACHE_DOWN is False
     assert cfg.ZERO_TRUST_API_KEY is None
     assert cfg.FRONTEND_BASE_URL == "http://localhost:3000"
     assert cfg.SSO_STATE_TTL_SECONDS == 600
@@ -184,6 +230,16 @@ def test_settings_env_overrides(monkeypatch):
             "GEO_API_KEY": "geo-key",
             "GEO_API_BASE_URL": "https://geo.example.com",
             "GEO_ENRICHMENT_TTL_DAYS": "7",
+            "JOB_QUEUE_LOCK_TIMEOUT_SECONDS": "123",
+            "JOB_QUEUE_POLL_INTERVAL_SECONDS": "4",
+            "QUEUE_TENANT_RPM_STANDARD": "33",
+            "QUEUE_TENANT_BURST_STANDARD": "6",
+            "QUEUE_TENANT_MAX_IN_FLIGHT_STANDARD": "2",
+            "QUEUE_TENANT_RPM_BULK": "9",
+            "QUEUE_TENANT_BURST_BULK": "3",
+            "QUEUE_TENANT_MAX_IN_FLIGHT_BULK": "4",
+            "CHAOS_DB_LATENCY_MS": "123",
+            "CHAOS_CACHE_DOWN": "true",
             "ZERO_TRUST_API_KEY": "zt-key",
             "FRONTEND_BASE_URL": "https://app.example.com",
             "SSO_STATE_TTL_SECONDS": "120",
@@ -237,6 +293,16 @@ def test_settings_env_overrides(monkeypatch):
     assert cfg.GEO_API_KEY == "geo-key"
     assert cfg.GEO_API_BASE_URL == "https://geo.example.com"
     assert cfg.GEO_ENRICHMENT_TTL_DAYS == 7
+    assert cfg.JOB_QUEUE_LOCK_TIMEOUT_SECONDS == 123
+    assert cfg.JOB_QUEUE_POLL_INTERVAL_SECONDS == 4
+    assert cfg.QUEUE_TENANT_RPM_STANDARD == 33
+    assert cfg.QUEUE_TENANT_BURST_STANDARD == 6
+    assert cfg.QUEUE_TENANT_MAX_IN_FLIGHT_STANDARD == 2
+    assert cfg.QUEUE_TENANT_RPM_BULK == 9
+    assert cfg.QUEUE_TENANT_BURST_BULK == 3
+    assert cfg.QUEUE_TENANT_MAX_IN_FLIGHT_BULK == 4
+    assert cfg.CHAOS_DB_LATENCY_MS == 123
+    assert cfg.CHAOS_CACHE_DOWN is True
     assert cfg.DATABASE_URL == "sqlite:///:memory:"
     assert cfg.SECRET_KEY == "override"
     assert cfg.ZERO_TRUST_API_KEY == "zt-key"

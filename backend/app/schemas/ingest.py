@@ -86,3 +86,11 @@ class IngestBrowserResponse(BaseModel):
     received_at: datetime
     request_id: Optional[str] = None
     deduped: bool = False
+    accepted: Optional[int] = None
+    dropped: Optional[int] = None
+    deduped_count: Optional[int] = None
+    sampled_out: Optional[int] = None
+
+
+class IngestBrowserBatch(BaseModel):
+    events: list[IngestBrowserEvent]

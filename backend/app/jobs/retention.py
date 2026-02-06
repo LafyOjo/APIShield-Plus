@@ -44,7 +44,14 @@ def _coerce_positive_int(value) -> int | None:
 
 def _effective_retention_days(dataset_key: str, desired_days: int, limits: dict) -> int:
     limit_key = DATASET_RETENTION_LIMIT_KEYS.get(dataset_key)
-    max_allowed = _coerce_positive_int(limits.get(limit_key)) if limit_key else None
+    if isinstance(limit_key, (list, tuple)):
+        max_allowed = None
+        for key in limit_key:
+            max_allowed = _coerce_positive_int(limits.get(key))
+            if max_allowed is not None:
+                break
+    else:
+        max_allowed = _coerce_positive_int(limits.get(limit_key)) if limit_key else None
     if max_allowed is None:
         return desired_days
     return min(desired_days, max_allowed)

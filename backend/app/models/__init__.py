@@ -20,6 +20,7 @@ from .api_keys import APIKey
 from .memberships import Membership
 from .invites import Invite
 from .tenant_settings import TenantSettings
+from .tenant_branding import TenantBranding
 from .revenue_impact import ConversionMetric, BaselineModel, ImpactEstimate
 from .incidents import (
     Incident,
@@ -64,6 +65,9 @@ from .partners import PartnerUser, PartnerLead
 from .feature_flags import FeatureFlag, Experiment, ExperimentAssignment
 from .integration_directory import IntegrationListing, IntegrationInstallEvent
 from .marketplace import MarketplaceTemplate, TemplateImportEvent
+from .resellers import ResellerAccount, ManagedTenant
+from .job_queue import JobQueue
+from .job_dead_letters import JobDeadLetter
 
 __all__ = [
     "Alert",
@@ -88,6 +92,7 @@ __all__ = [
     "Membership",
     "Invite",
     "TenantSettings",
+    "TenantBranding",
     "ConversionMetric",
     "BaselineModel",
     "ImpactEstimate",
@@ -149,4 +154,8 @@ __all__ = [
     "IntegrationInstallEvent",
     "MarketplaceTemplate",
     "TemplateImportEvent",
+    "ResellerAccount",
+    "ManagedTenant",
+    "JobQueue",
+    "JobDeadLetter",
 ]

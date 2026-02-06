@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+from hashlib import sha256
+import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -13,8 +15,10 @@ from app.core.badges import (
     sign_badge_request,
     verify_badge_signature,
 )
+from app.core.branding import format_badge_brand_label, resolve_effective_badge_branding_mode
 from app.core.config import settings
 from app.core.db import get_db
+from app.crud.tenant_branding import get_branding
 from app.entitlements.resolver import resolve_entitlements_for_tenant
 from app.models.enums import WebsiteStatusEnum
 from app.models.trust_badges import TrustBadgeConfig
@@ -32,6 +36,11 @@ def _base_url(request: Request) -> str:
 def _badge_cache_headers(response, *, max_age: int) -> None:
     response.headers["Cache-Control"] = f"public, max-age={max_age}"
     response.headers["Access-Control-Allow-Origin"] = "*"
+
+
+def _etag_for_payload(payload: str) -> str:
+    digest = sha256(payload.encode("utf-8")).hexdigest()
+    return f"\"{digest}\""
 
 
 def _load_enabled_badge(db, website_id: int) -> tuple[TrustBadgeConfig, Website]:
@@ -208,6 +217,7 @@ def serve_badge_js(
     js = _render_badge_js(data_url)
     response = PlainTextResponse(js, media_type="application/javascript")
     _badge_cache_headers(response, max_age=settings.BADGE_JS_CACHE_SECONDS)
+    response.headers["ETag"] = _etag_for_payload(js)
     return response
 
 
@@ -216,6 +226,7 @@ def serve_badge_data(
     website_id: int,
     ts: int,
     sig: str,
+    request: Request,
     db=Depends(get_db),
 ):
     config, website = _load_enabled_badge(db, website_id)
@@ -234,12 +245,22 @@ def serve_badge_data(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid badge signature")
 
     entitlements = resolve_entitlements_for_tenant(db, website.tenant_id)
+    branding = get_branding(db, website.tenant_id)
     snapshot = _latest_snapshot(db, website.tenant_id, website_id)
 
     trust_score = snapshot.trust_score if snapshot else None
     confidence = snapshot.confidence if snapshot else None
     updated_at = snapshot.bucket_start if snapshot else None
     status_label = "ok" if snapshot else "collecting"
+
+    branding_mode = resolve_effective_badge_branding_mode(
+        branding.badge_branding_mode if branding else None,
+        entitlements.get("plan_key"),
+    )
+    brand_label = format_badge_brand_label(
+        branding_mode,
+        branding.brand_name if branding else None,
+    )
 
     payload: dict[str, Any] = {
         "website_id": website_id,
@@ -252,10 +273,16 @@ def serve_badge_data(
         "show_branding": config.show_branding,
         "clickthrough_url": config.clickthrough_url,
         "verified": _compute_verified(trust_score, confidence),
-        "brand_label": "Security monitored by APIShield+",
+        "brand_label": brand_label,
     }
-    payload = apply_badge_policy_to_payload(payload, entitlements.get("plan_key"))
+    payload = apply_badge_policy_to_payload(
+        payload,
+        entitlements.get("plan_key"),
+        branding_mode=branding_mode,
+    )
 
+    payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False, default=str)
     response = JSONResponse(payload)
     _badge_cache_headers(response, max_age=settings.BADGE_DATA_CACHE_SECONDS)
+    response.headers["ETag"] = _etag_for_payload(payload_json)
     return response

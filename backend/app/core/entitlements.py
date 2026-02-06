@@ -20,6 +20,8 @@ ALLOWED_FEATURES = {
     "verification",
     "incident_exports",
     "data_exports",
+    "portfolio_view",
+    "portfolio_exports",
     "sso_oidc",
     "sso_saml",
     "scim",

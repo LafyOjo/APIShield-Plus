@@ -66,3 +66,12 @@ class AdminSupportViewAsResponse(BaseModel):
     tenant_id: int
     expires_at: datetime
     support_token: str
+
+
+class AdminPerfRequestRecord(BaseModel):
+    request_id: Optional[str] = None
+    path: str
+    status_code: int
+    duration_ms: float
+    db_time_ms: float
+    db_queries_count: int

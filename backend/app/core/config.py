@@ -78,6 +78,39 @@ class Settings(BaseSettings):
     BADGE_JS_CACHE_SECONDS: int = 60
     BADGE_DATA_CACHE_SECONDS: int = 60
 
+    # Public trust score proof settings.
+    TRUST_SCORE_SIGNING_PRIVATE_KEY: Optional[str] = None
+    TRUST_SCORE_SIGNING_PUBLIC_KEY: Optional[str] = None
+    TRUST_SCORE_SIGNING_KEY_ID: Optional[str] = None
+    TRUST_SCORE_CACHE_SECONDS: int = 60
+    TRUST_SCORE_RPM: int = 120
+    TRUST_SCORE_BURST: int = 120
+    TRUST_SCORE_ABUSE_THRESHOLD: int = 20
+    TRUST_SCORE_BAN_SECONDS: int = 600
+
+    # Performance profiling (opt-in).
+    PERF_PROFILING: bool = False
+    PERF_SLOW_QUERY_MS: int = 200
+    PERF_SLOW_QUERY_MAX_PER_REQUEST: int = 5
+
+    # Chaos testing toggles (staging-only).
+    CHAOS_DB_LATENCY_MS: int = 0
+    CHAOS_CACHE_DOWN: bool = False
+
+    # Caching configuration.
+    # CACHE_BACKEND: memory | redis | none
+    CACHE_BACKEND: str = "memory"
+    CACHE_NAMESPACE: str = "apishield"
+    CACHE_DEFAULT_TTL_SECONDS: int = 60
+    CACHE_TTL_MAP_SUMMARY: int = 60
+    CACHE_TTL_MAP_DRILLDOWN: int = 60
+    CACHE_TTL_REVENUE_LEAKS: int = 60
+    CACHE_TTL_TRUST_SNAPSHOTS: int = 60
+    CACHE_TTL_PORTFOLIO_SUMMARY: int = 60
+    CACHE_TTL_INCIDENTS_LIST: int = 30
+    CACHE_TTL_INCIDENT_DETAIL: int = 30
+    REDIS_URL: Optional[str] = None
+
     # Proxy/client IP extraction settings
     TRUST_PROXY_HEADERS: bool = False
     TRUSTED_PROXY_IPS: List[str] = Field(default_factory=list)
@@ -127,11 +160,23 @@ class Settings(BaseSettings):
     INGEST_ABUSE_BAN_THRESHOLD: int = 10
     INGEST_ABUSE_WINDOW_SECONDS: int = 60
     INGEST_ABUSE_BAN_SECONDS: int = 900
+    INGEST_MAX_BATCH_EVENTS: int = 50
+    INGEST_SAMPLING_DEFAULT_RATE: float = 1.0
 
     # Data export configuration (warehouse connectors).
     EXPORT_TARGET: str = "local"
     EXPORT_LOCAL_DIR: str = "./exports"
     EXPORT_DEFAULT_LOOKBACK_HOURS: int = 24
+
+    # Job queue settings (worker partitions + fairness).
+    JOB_QUEUE_LOCK_TIMEOUT_SECONDS: int = 300
+    JOB_QUEUE_POLL_INTERVAL_SECONDS: int = 2
+    QUEUE_TENANT_RPM_STANDARD: int = 60
+    QUEUE_TENANT_BURST_STANDARD: int = 5
+    QUEUE_TENANT_MAX_IN_FLIGHT_STANDARD: int = 1
+    QUEUE_TENANT_RPM_BULK: int = 10
+    QUEUE_TENANT_BURST_BULK: int = 2
+    QUEUE_TENANT_MAX_IN_FLIGHT_BULK: int = 1
 
     # Demo data seeding / expiry.
     DEMO_DATA_RETENTION_DAYS: int = 7

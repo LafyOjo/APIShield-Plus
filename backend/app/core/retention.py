@@ -21,11 +21,11 @@ ALLOWED_RETENTION_DATASETS = {
 }
 
 DATASET_RETENTION_LIMIT_KEYS = {
-    "behaviour_events": "retention_days",
-    "security_events": "retention_days",
+    "behaviour_events": ("raw_event_retention_days", "retention_days"),
+    "security_events": ("raw_event_retention_days", "retention_days"),
     "incidents": "retention_days",
     "audit_logs": "retention_days",
-    "geo_agg": "geo_history_days",
+    "geo_agg": ("aggregate_retention_days", "geo_history_days"),
 }
 
 DEFAULT_RETENTION_DAYS = {
@@ -55,6 +55,20 @@ def validate_dataset_key(dataset_key: str) -> None:
         raise ValueError(f"Unsupported dataset_key: {dataset_key}")
 
 
+def _resolve_limit_value(plan_limits: dict | None, limit_key) -> int | None:
+    if not plan_limits or not limit_key:
+        return None
+    keys = limit_key if isinstance(limit_key, (list, tuple)) else (limit_key,)
+    for key in keys:
+        try:
+            parsed = int(plan_limits.get(key))
+        except (TypeError, ValueError):
+            parsed = None
+        if parsed and parsed > 0:
+            return parsed
+    return None
+
+
 def default_dataset_retention_days(
     dataset_key: str,
     *,
@@ -62,14 +76,9 @@ def default_dataset_retention_days(
 ) -> int:
     validate_dataset_key(dataset_key)
     limit_key = DATASET_RETENTION_LIMIT_KEYS.get(dataset_key)
-    if plan_limits and limit_key:
-        value = plan_limits.get(limit_key)
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            parsed = None
-        if parsed and parsed > 0:
-            return parsed
+    limit_value = _resolve_limit_value(plan_limits, limit_key)
+    if limit_value is not None:
+        return limit_value
     fallback = DEFAULT_DATASET_RETENTION_DAYS.get(dataset_key)
     if fallback is None:
         raise ValueError(f"No default retention days configured for dataset: {dataset_key}")

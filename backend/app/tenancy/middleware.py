@@ -25,6 +25,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         request_id = (
             getattr(request.state, "request_id", None)
             or request.headers.get("X-Request-ID")
+            or request.headers.get("X-Request-Id")
             or str(uuid4())
         )
         request.state.request_id = request_id
@@ -53,5 +54,5 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             },
         )
         response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Request-Id"] = request_id
         return response

@@ -209,7 +209,91 @@ components:
           type: string
         is_enabled:
           type: boolean
+    PublicScoreSummary:
+      type: object
+      properties:
+        window_hours:
+          type: integer
+        count:
+          type: integer
+        avg:
+          type: number
+        min:
+          type: integer
+        max:
+          type: integer
+    PublicScoreResponse:
+      type: object
+      properties:
+        website_id:
+          type: integer
+        trust_score_current:
+          type: integer
+          nullable: true
+        verified_status:
+          type: boolean
+        last_updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        transparency_level:
+          type: string
+        score_history_summary:
+          $ref: "#/components/schemas/PublicScoreSummary"
+          nullable: true
+        proof_key_id:
+          type: string
+    PublicScoreKeyResponse:
+      type: object
+      properties:
+        proof_key_id:
+          type: string
+        public_key:
+          type: string
+        algorithm:
+          type: string
 paths:
+  /public/score/keys:
+    get:
+      summary: Fetch public signing key for trust score proofs
+      responses:
+        "200":
+          description: Public key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicScoreKeyResponse"
+        "404":
+          description: Public key not configured
+  /public/score/v1:
+    get:
+      summary: Fetch signed trust score proof (public)
+      parameters:
+        - in: query
+          name: website_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Signed trust score payload
+          headers:
+            X-Proof-Signature:
+              schema:
+                type: string
+              description: Base64url-encoded Ed25519 signature of the canonical JSON payload.
+            X-Proof-Key-Id:
+              schema:
+                type: string
+              description: Key ID to match against /public/score/keys.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicScoreResponse"
+        "404":
+          description: Website not found
+        "429":
+          description: Rate limit exceeded
   /ingest/browser:
     post:
       summary: Ingest browser events

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+import gzip
 import json
 import logging
 from ipaddress import ip_address
 from time import monotonic
+from typing import Any
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -18,16 +20,27 @@ from app.core.entitlements import resolve_effective_entitlements
 from app.core.event_types import normalize_path
 from app.core.metrics import record_ingest_event, record_ingest_latency
 from app.core.onboarding_emails import queue_first_event_email
-from app.core.usage import get_or_create_current_period_usage, increment_storage
-from app.entitlements.enforcement import assert_limit
+from app.core.sampling import (
+    is_high_priority_event,
+    resolve_sampling_config,
+    should_keep_event,
+)
+from app.core.usage import (
+    get_or_create_current_period_usage,
+    increment_aggregate_rows,
+    increment_events,
+    increment_raw_events,
+    increment_sampled_out,
+    increment_storage,
+)
 from app.core.privacy import hash_ip
 from app.core.rate_limit import allow, is_banned, register_abuse_attempt, register_invalid_attempt
 from app.core.tracing import trace_span
-from app.core.usage import increment_events
 from app.core.utils.domain import normalize_domain
 from app.crud.api_keys import get_api_key_by_public_key, mark_api_key_used
-from app.crud.behaviour_events import create_behaviour_event, get_behaviour_event_by_event_id
-from app.crud.behaviour_sessions import upsert_behaviour_session
+from app.crud.behaviour_events import create_behaviour_events_bulk
+from app.crud.behaviour_sessions import upsert_behaviour_sessions_bulk
+from app.crud.tenant_settings import get_settings
 from app.geo.enrichment import mark_ip_seen
 from app.models.anomaly_signals import AnomalySignalEvent
 from app.models.enums import WebsiteStatusEnum
@@ -117,21 +130,88 @@ def _estimate_payload_bytes(payload: IngestBrowserEvent) -> int:
     )
 
 
+def _decode_request_body(request: Request) -> bytes:
+    encoding = (request.headers.get("Content-Encoding") or "").lower()
+    raw = request._body  # type: ignore[attr-defined]
+    if raw is None:
+        raw = b""
+    if "gzip" in encoding:
+        try:
+            raw = gzip.decompress(raw)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to decompress payload",
+            ) from exc
+    return raw
+
+
+async def _read_payload_json(request: Request) -> Any:
+    _enforce_body_limit(request)
+    raw = await request.body()
+    if raw and len(raw) > settings.INGEST_MAX_BODY_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Payload too large",
+        )
+    request._body = raw  # type: ignore[attr-defined]
+    decoded = _decode_request_body(request)
+    if decoded and len(decoded) > settings.INGEST_MAX_BODY_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Payload too large",
+        )
+    try:
+        return json.loads(decoded.decode("utf-8") if decoded else "{}")
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid JSON payload",
+        ) from exc
+
+
+def _parse_event_payload(payload: Any) -> IngestBrowserEvent:
+    try:
+        return IngestBrowserEvent.model_validate(payload)
+    except AttributeError:
+        return IngestBrowserEvent.parse_obj(payload)
+
+
+def _parse_events_payload(payload: Any) -> list[IngestBrowserEvent]:
+    if isinstance(payload, dict) and "events" in payload:
+        candidate = payload.get("events")
+    else:
+        candidate = payload
+
+    events: list[Any]
+    if isinstance(candidate, list):
+        events = candidate
+    elif candidate:
+        events = [candidate]
+    else:
+        events = []
+    if not events:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No events provided")
+    if len(events) > settings.INGEST_MAX_BATCH_EVENTS:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Batch size too large",
+        )
+    parsed: list[IngestBrowserEvent] = []
+    for entry in events:
+        parsed.append(_parse_event_payload(entry))
+    return parsed
+
+
 @router.post("/browser", response_model=IngestBrowserResponse)
 async def ingest_browser_event(
-    payload: IngestBrowserEvent,
     request: Request,
     db: Session = Depends(get_db),
 ):
     start_time = monotonic()
     ingest_type = "browser"
-    _enforce_body_limit(request)
-    body = await request.body()
-    if body and len(body) > settings.INGEST_MAX_BODY_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Payload too large",
-        )
+    payload_json = await _read_payload_json(request)
+    events = _parse_events_payload(payload_json)
 
     client_ip = getattr(request.state, "client_ip", None) or _fallback_client_ip(request)
     banned, retry_after = is_banned(client_ip)
@@ -182,9 +262,6 @@ async def ingest_browser_event(
     if not environment or environment.status != "active":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Environment not found")
 
-    if not _matches_domain(payload.url, website.domain):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Domain mismatch")
-
     request_id = getattr(request.state, "request_id", None)
     ip_hash = None
     if client_ip:
@@ -202,189 +279,260 @@ async def ingest_browser_event(
         except Exception:
             logger.exception("Failed to record geo enrichment seed")
     user_agent = getattr(request.state, "user_agent", None)
-    event_path = payload.path
-    if not event_path:
-        event_path = normalize_path(urlsplit(payload.url).path or "/")
 
     entitlements = resolve_effective_entitlements(db, api_key.tenant_id)
     limits = entitlements.get("limits", {})
     rpm_limit = _coerce_positive_int(limits.get("ingest_rpm"), settings.INGEST_DEFAULT_RPM)
     burst_limit = _coerce_positive_int(limits.get("ingest_burst"), settings.INGEST_DEFAULT_BURST)
-    key_allowed, key_retry = allow(
-        f"ingest:key:{api_key.public_key}",
-        capacity=burst_limit,
-        refill_rate_per_sec=rpm_limit / 60.0,
-    )
-    if not key_allowed:
-        _raise_rate_limit(key_retry, "Rate limit exceeded")
+
+    for _ in range(len(events)):
+        key_allowed, key_retry = allow(
+            f"ingest:key:{api_key.public_key}",
+            capacity=burst_limit,
+            refill_rate_per_sec=rpm_limit / 60.0,
+        )
+        if not key_allowed:
+            _raise_rate_limit(key_retry, "Rate limit exceeded")
 
     if ip_hash:
-        ip_allowed, ip_retry = allow(
-            f"ingest:ip:{ip_hash}",
-            capacity=settings.INGEST_IP_BURST,
-            refill_rate_per_sec=settings.INGEST_IP_RPM / 60.0,
-        )
-        if not ip_allowed:
-            ban_for = register_abuse_attempt(
-                f"iphash:{ip_hash}",
-                threshold=settings.INGEST_ABUSE_BAN_THRESHOLD,
-                ban_seconds=settings.INGEST_ABUSE_BAN_SECONDS,
-                window_seconds=settings.INGEST_ABUSE_WINDOW_SECONDS,
+        for _ in range(len(events)):
+            ip_allowed, ip_retry = allow(
+                f"ingest:ip:{ip_hash}",
+                capacity=settings.INGEST_IP_BURST,
+                refill_rate_per_sec=settings.INGEST_IP_RPM / 60.0,
             )
-            if ban_for:
-                _raise_rate_limit(ban_for, "Too many abusive requests")
-            _raise_rate_limit(ip_retry, "Rate limit exceeded")
+            if not ip_allowed:
+                ban_for = register_abuse_attempt(
+                    f"iphash:{ip_hash}",
+                    threshold=settings.INGEST_ABUSE_BAN_THRESHOLD,
+                    ban_seconds=settings.INGEST_ABUSE_BAN_SECONDS,
+                    window_seconds=settings.INGEST_ABUSE_WINDOW_SECONDS,
+                )
+                if ban_for:
+                    _raise_rate_limit(ban_for, "Too many abusive requests")
+                _raise_rate_limit(ip_retry, "Rate limit exceeded")
 
-    existing_event = get_behaviour_event_by_event_id(
-        db,
-        tenant_id=api_key.tenant_id,
-        environment_id=environment.id,
-        event_id=payload.event_id,
+    settings_row = None
+    try:
+        settings_row = get_settings(db, api_key.tenant_id)
+    except Exception:
+        settings_row = None
+    sampling_default_rate, sampling_rules = resolve_sampling_config(
+        settings_row,
+        default_rate=settings.INGEST_SAMPLING_DEFAULT_RATE,
     )
-    if existing_event:
+
+    usage = get_or_create_current_period_usage(api_key.tenant_id, db=db)
+    current_usage = int(usage.events_ingested or 0)
+    limit_value = _coerce_positive_int(limits.get("events_per_month"), 0)
+    remaining_quota = limit_value - current_usage if limit_value else None
+
+    accepted_events: list[IngestBrowserEvent] = []
+    event_paths: dict[str, str] = {}
+    dropped_domain = 0
+    dropped_sampled = 0
+    for event in events:
+        if not _matches_domain(event.url, website.domain):
+            dropped_domain += 1
+            continue
+        path_value = event.path or normalize_path(urlsplit(event.url).path or "/")
+        event_paths[event.event_id] = path_value
+        if not should_keep_event(
+            event_type=event.type,
+            path=path_value,
+            rules=sampling_rules,
+            default_rate=sampling_default_rate,
+        ):
+            dropped_sampled += 1
+            continue
+        accepted_events.append(event)
+
+    if dropped_sampled:
+        increment_sampled_out(api_key.tenant_id, dropped_sampled, db=db)
+
+    if not accepted_events:
+        detail = "Domain mismatch" if dropped_domain else "All events sampled"
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    def _is_high_priority(event: IngestBrowserEvent) -> bool:
+        path_value = event_paths.get(event.event_id)
+        return is_high_priority_event(event.type, path_value)
+
+    if remaining_quota is not None and remaining_quota <= 0:
+        high_priority = [event for event in accepted_events if _is_high_priority(event)]
+        if not high_priority:
+            _raise_rate_limit(60, "Ingest quota exceeded for plan")
+        accepted_events = high_priority
+
+    if remaining_quota is not None and remaining_quota > 0 and len(accepted_events) > remaining_quota:
+        high_priority = [event for event in accepted_events if _is_high_priority(event)]
+        low_priority = [event for event in accepted_events if not _is_high_priority(event)]
+        accepted_events = high_priority + low_priority
+        accepted_events = accepted_events[:remaining_quota]
+
+    event_ids = [event.event_id for event in accepted_events]
+    existing_event_ids: set[str] = set()
+    if event_ids:
+        from app.models.behaviour_events import BehaviourEvent
+
+        existing_event_ids = {
+            row[0]
+            for row in (
+                db.query(BehaviourEvent.event_id)
+                .filter(
+                    BehaviourEvent.tenant_id == api_key.tenant_id,
+                    BehaviourEvent.environment_id == environment.id,
+                    BehaviourEvent.event_id.in_(event_ids),
+                )
+                .all()
+            )
+        }
+
+    deduped_count = 0
+    unique_events: list[IngestBrowserEvent] = []
+    seen_ids: set[str] = set()
+    for event in accepted_events:
+        if event.event_id in seen_ids:
+            deduped_count += 1
+            continue
+        seen_ids.add(event.event_id)
+        if event.event_id in existing_event_ids:
+            deduped_count += 1
+            continue
+        unique_events.append(event)
+
+    if not unique_events:
         mark_api_key_used(db, api_key.public_key)
-        record_ingest_event(
-            tenant_id=api_key.tenant_id,
-            website_id=website.id,
-            environment_id=environment.id,
-            event_type=payload.type,
-            ingest_type=ingest_type,
-        )
         record_ingest_latency(
             ingest_type=ingest_type,
             duration_ms=(monotonic() - start_time) * 1000.0,
         )
+        total_dropped = dropped_domain + dropped_sampled + deduped_count
         return IngestBrowserResponse(
             ok=True,
             received_at=datetime.utcnow(),
             request_id=request_id,
             deduped=True,
+            accepted=0,
+            dropped=total_dropped,
+            deduped_count=deduped_count,
+            sampled_out=dropped_sampled,
         )
 
-    payload_bytes = _estimate_payload_bytes(payload)
-    usage = get_or_create_current_period_usage(api_key.tenant_id, db=db)
-    assert_limit(
-        entitlements,
-        "events_per_month",
-        int(usage.events_ingested or 0),
-        mode="hard",
-        message="Ingest quota exceeded for plan",
-    )
+    event_rows: list[dict[str, Any]] = []
+    session_updates: list[dict[str, Any]] = []
+    payload_bytes = 0
+    stack_hints = None
+    for event in unique_events:
+        event_path = event_paths.get(event.event_id) or normalize_path(urlsplit(event.url).path or "/")
+        event_rows.append(
+            {
+                "tenant_id": api_key.tenant_id,
+                "website_id": website.id,
+                "environment_id": environment.id,
+                "event_id": event.event_id,
+                "event_type": event.type,
+                "url": event.url,
+                "event_ts": event.ts,
+                "ingested_at": datetime.utcnow(),
+                "path": event_path,
+                "referrer": event.referrer,
+                "session_id": event.session_id,
+                "visitor_id": event.user_id,
+                "meta": event.meta,
+                "ip_hash": ip_hash,
+                "user_agent": user_agent,
+            }
+        )
+        payload_bytes += _estimate_payload_bytes(event)
+        if event.session_id:
+            session_updates.append(
+                {
+                    "session_id": event.session_id,
+                    "event_type": event.type,
+                    "event_ts": event.ts,
+                    "path": event_path,
+                    "ip_hash": ip_hash,
+                }
+            )
+        if stack_hints is None and event.stack_hints:
+            stack_hints = event.stack_hints
 
+    inserted_count = 0
+    sessions_touched = 0
     with trace_span(
         "ingest.browser",
         tenant_id=api_key.tenant_id,
         website_id=website.id,
         environment_id=environment.id,
-        event_type=payload.type,
     ):
-        if payload.session_id:
-            with trace_span(
-                "ingest.session_upsert",
-                tenant_id=api_key.tenant_id,
-                session_id=payload.session_id,
-            ):
-                upsert_behaviour_session(
-                    db,
-                    tenant_id=api_key.tenant_id,
-                    website_id=website.id,
-                    environment_id=environment.id,
-                    session_id=payload.session_id,
-                    event_type=payload.type,
-                    event_ts=payload.ts,
-                    path=event_path,
-                    ip_hash=ip_hash,
-                )
-
         try:
+            if session_updates:
+                with trace_span(
+                    "ingest.session_upsert",
+                    tenant_id=api_key.tenant_id,
+                ):
+                    sessions_touched = upsert_behaviour_sessions_bulk(
+                        db,
+                        tenant_id=api_key.tenant_id,
+                        website_id=website.id,
+                        environment_id=environment.id,
+                        updates=session_updates,
+                        commit=False,
+                    )
             with trace_span(
                 "ingest.event_insert",
                 tenant_id=api_key.tenant_id,
-                event_id=payload.event_id,
             ):
-                create_behaviour_event(
+                inserted_count = create_behaviour_events_bulk(
                     db,
-                    tenant_id=api_key.tenant_id,
-                    website_id=website.id,
-                    environment_id=environment.id,
-                    event_id=payload.event_id,
-                    event_type=payload.type,
-                    url=payload.url,
-                    event_ts=payload.ts,
-                    ingested_at=datetime.utcnow(),
-                    path=event_path,
-                    referrer=payload.referrer,
-                    session_id=payload.session_id,
-                    visitor_id=payload.user_id,
-                    meta=payload.meta,
-                    ip_hash=ip_hash,
-                    client_ip=client_ip,
-                    user_agent=user_agent,
+                    events=event_rows,
+                    commit=False,
                 )
+            db.commit()
         except IntegrityError:
             db.rollback()
-            existing_event = get_behaviour_event_by_event_id(
-                db,
-                tenant_id=api_key.tenant_id,
-                environment_id=environment.id,
-                event_id=payload.event_id,
-            )
-            if existing_event:
-                mark_api_key_used(db, api_key.public_key)
-                record_ingest_event(
-                    tenant_id=api_key.tenant_id,
-                    website_id=website.id,
-                    environment_id=environment.id,
-                    event_type=payload.type,
-                    ingest_type=ingest_type,
-                )
-                record_ingest_latency(
-                    ingest_type=ingest_type,
-                    duration_ms=(monotonic() - start_time) * 1000.0,
-                )
-                return IngestBrowserResponse(
-                    ok=True,
-                    received_at=datetime.utcnow(),
-                    request_id=request_id,
-                    deduped=True,
-                )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to ingest event",
+                detail="Failed to ingest event batch",
             )
 
+    try:
+        queue_first_event_email(db, tenant_id=api_key.tenant_id)
+    except Exception:
+        logger.exception("Failed to queue first event email")
+
+    if stack_hints:
         try:
-            queue_first_event_email(db, tenant_id=api_key.tenant_id)
+            apply_stack_detection(
+                db,
+                tenant_id=api_key.tenant_id,
+                website_id=website.id,
+                hints=stack_hints,
+            )
         except Exception:
-            logger.exception("Failed to queue first event email")
+            db.rollback()
+            logger.exception("Stack detection failed")
 
-        if payload.stack_hints:
-            try:
-                apply_stack_detection(
-                    db,
-                    tenant_id=api_key.tenant_id,
-                    website_id=website.id,
-                    hints=payload.stack_hints,
-                )
-            except Exception:
-                db.rollback()
-                logger.exception("Stack detection failed")
-
-        try:
+    try:
+        for event in unique_events:
             anomaly_ctx = AnomalyContext(
                 tenant_id=api_key.tenant_id,
                 website_id=website.id,
                 environment_id=environment.id,
-                session_id=payload.session_id,
-                event_id=payload.event_id,
+                session_id=event.session_id,
+                event_id=event.event_id,
             )
             with trace_span(
                 "ingest.anomaly_eval",
                 tenant_id=api_key.tenant_id,
-                event_id=payload.event_id,
+                event_id=event.event_id,
             ):
-                signals = evaluate_event_for_anomaly(anomaly_ctx, payload)
+                signals = evaluate_event_for_anomaly(anomaly_ctx, event)
             if signals:
+                event_path = event_paths.get(event.event_id) or normalize_path(
+                    urlsplit(event.url).path or "/"
+                )
                 for signal in signals:
                     db.add(
                         AnomalySignalEvent(
@@ -393,37 +541,47 @@ async def ingest_browser_event(
                             environment_id=environment.id,
                             signal_type=signal.type,
                             severity=signal.severity,
-                            session_id=payload.session_id,
-                            event_id=payload.event_id,
+                            session_id=event.session_id,
+                            event_id=event.event_id,
                             summary={
-                                "event_type": payload.type,
+                                "event_type": event.type,
                                 "path": event_path,
                                 "evidence": signal.evidence,
                             },
                         )
                     )
-                db.commit()
-        except Exception:
-            db.rollback()
-            logger.exception("Anomaly evaluation failed")
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Anomaly evaluation failed")
 
     mark_api_key_used(db, api_key.public_key)
-    increment_events(api_key.tenant_id, 1, db=db)
-    increment_storage(api_key.tenant_id, payload_bytes, db=db)
-    record_ingest_event(
-        tenant_id=api_key.tenant_id,
-        website_id=website.id,
-        environment_id=environment.id,
-        event_type=payload.type,
-        ingest_type=ingest_type,
-    )
+    if inserted_count:
+        increment_events(api_key.tenant_id, inserted_count, db=db)
+        increment_raw_events(api_key.tenant_id, inserted_count, db=db)
+        increment_storage(api_key.tenant_id, payload_bytes, db=db)
+    if sessions_touched:
+        increment_aggregate_rows(api_key.tenant_id, sessions_touched, db=db)
+    for event in unique_events:
+        record_ingest_event(
+            tenant_id=api_key.tenant_id,
+            website_id=website.id,
+            environment_id=environment.id,
+            event_type=event.type,
+            ingest_type=ingest_type,
+        )
     record_ingest_latency(
         ingest_type=ingest_type,
         duration_ms=(monotonic() - start_time) * 1000.0,
     )
+    total_dropped = dropped_domain + dropped_sampled + deduped_count + (len(unique_events) - inserted_count)
     return IngestBrowserResponse(
         ok=True,
         received_at=datetime.utcnow(),
         request_id=request_id,
         deduped=False,
+        accepted=inserted_count,
+        dropped=total_dropped,
+        deduped_count=deduped_count,
+        sampled_out=dropped_sampled,
     )

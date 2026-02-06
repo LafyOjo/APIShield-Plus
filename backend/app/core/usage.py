@@ -93,6 +93,111 @@ def increment_events(
             session.close()
 
 
+def increment_raw_events(
+    tenant_id: int,
+    count: int,
+    *,
+    db: Optional[Session] = None,
+    now: Optional[datetime] = None,
+) -> TenantUsage:
+    if count < 0:
+        raise ValueError("count must be non-negative")
+    session = db or SessionLocal()
+    close_session = db is None
+    try:
+        period_start, _ = _period_bounds(now)
+        _get_or_create(session, tenant_id, now=now)
+        session.query(TenantUsage).filter(
+            TenantUsage.tenant_id == tenant_id,
+            TenantUsage.period_start == period_start,
+        ).update(
+            {
+                TenantUsage.raw_events_stored: TenantUsage.raw_events_stored + count,
+                TenantUsage.updated_at: datetime.now(timezone.utc),
+            },
+            synchronize_session=False,
+        )
+        session.commit()
+        return (
+            session.query(TenantUsage)
+            .filter(TenantUsage.tenant_id == tenant_id, TenantUsage.period_start == period_start)
+            .first()
+        )
+    finally:
+        if close_session:
+            session.close()
+
+
+def increment_sampled_out(
+    tenant_id: int,
+    count: int,
+    *,
+    db: Optional[Session] = None,
+    now: Optional[datetime] = None,
+) -> TenantUsage:
+    if count < 0:
+        raise ValueError("count must be non-negative")
+    session = db or SessionLocal()
+    close_session = db is None
+    try:
+        period_start, _ = _period_bounds(now)
+        _get_or_create(session, tenant_id, now=now)
+        session.query(TenantUsage).filter(
+            TenantUsage.tenant_id == tenant_id,
+            TenantUsage.period_start == period_start,
+        ).update(
+            {
+                TenantUsage.events_sampled_out: TenantUsage.events_sampled_out + count,
+                TenantUsage.updated_at: datetime.now(timezone.utc),
+            },
+            synchronize_session=False,
+        )
+        session.commit()
+        return (
+            session.query(TenantUsage)
+            .filter(TenantUsage.tenant_id == tenant_id, TenantUsage.period_start == period_start)
+            .first()
+        )
+    finally:
+        if close_session:
+            session.close()
+
+
+def increment_aggregate_rows(
+    tenant_id: int,
+    count: int,
+    *,
+    db: Optional[Session] = None,
+    now: Optional[datetime] = None,
+) -> TenantUsage:
+    if count < 0:
+        raise ValueError("count must be non-negative")
+    session = db or SessionLocal()
+    close_session = db is None
+    try:
+        period_start, _ = _period_bounds(now)
+        _get_or_create(session, tenant_id, now=now)
+        session.query(TenantUsage).filter(
+            TenantUsage.tenant_id == tenant_id,
+            TenantUsage.period_start == period_start,
+        ).update(
+            {
+                TenantUsage.aggregate_rows_stored: TenantUsage.aggregate_rows_stored + count,
+                TenantUsage.updated_at: datetime.now(timezone.utc),
+            },
+            synchronize_session=False,
+        )
+        session.commit()
+        return (
+            session.query(TenantUsage)
+            .filter(TenantUsage.tenant_id == tenant_id, TenantUsage.period_start == period_start)
+            .first()
+        )
+    finally:
+        if close_session:
+            session.close()
+
+
 def increment_storage(
     tenant_id: int,
     byte_count: int,

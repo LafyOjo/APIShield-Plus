@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta, timezone
-from time import monotonic
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
+from app.core.cache import build_cache_key, cache_get, cache_set, db_scope_id
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.entitlements import resolve_effective_entitlements
@@ -37,9 +37,6 @@ from app.models.tenants import Tenant
 
 
 router = APIRouter(prefix="/map", tags=["map"])
-
-_SUMMARY_CACHE: dict[tuple, tuple[float, list[MapSummaryPoint]]] = {}
-_SUMMARY_CACHE_TTL_SECONDS = 60
 
 LEGACY_CATEGORY_MAP = {
     "behaviour": None,
@@ -91,21 +88,6 @@ def _resolve_tenant(db: Session, tenant_hint: str) -> Tenant:
     if not tenant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     return tenant
-
-
-def _cache_get(key: tuple) -> list[MapSummaryPoint] | None:
-    entry = _SUMMARY_CACHE.get(key)
-    if not entry:
-        return None
-    cached_at, value = entry
-    if monotonic() - cached_at > _SUMMARY_CACHE_TTL_SECONDS:
-        _SUMMARY_CACHE.pop(key, None)
-        return None
-    return value
-
-
-def _cache_set(key: tuple, value: list[MapSummaryPoint]) -> None:
-    _SUMMARY_CACHE[key] = (monotonic(), value)
 
 
 def _latlon_bounds(lat: float, lon: float, radius_km: float) -> tuple[float, float, float, float]:
@@ -381,6 +363,8 @@ def map_summary(
     clamp_limits["geo_history_days"] = max_geo_days
     clamp_result = clamp_range({"limits": clamp_limits}, "geo_history_days", from_ts, to_ts)
     from_ts, to_ts = clamp_result.from_ts, clamp_result.to_ts
+    if bucket_start:
+        bucket_start = _normalize_ts(bucket_start)
 
     with trace_span(
         "map.summary",
@@ -389,21 +373,25 @@ def map_summary(
         environment_id=env_id,
         category=category,
     ):
-        cache_key = (
-            str(db.get_bind().url),
-            tenant_id,
-            from_ts,
-            to_ts,
-            website_id,
-            env_id,
-            category,
-            severity,
-            geo_enabled,
-            include_demo,
+        cache_key = build_cache_key(
+            "map.summary",
+            tenant_id=tenant_id,
+            db_scope=db_scope_id(db),
+            filters={
+                "from": from_ts,
+                "to": to_ts,
+                "website_id": website_id,
+                "env_id": env_id,
+                "category": category,
+                "severity": severity,
+                "geo_enabled": geo_enabled,
+                "include_demo": include_demo,
+                "plan_key": entitlements.get("plan_key"),
+            },
         )
-        cached = _cache_get(cache_key)
+        cached = cache_get(cache_key, cache_name="map.summary")
         if cached is not None:
-            return MapSummaryResponse(items=cached)
+            return MapSummaryResponse(**cached)
 
         if geo_enabled:
             query = db.query(
@@ -476,8 +464,14 @@ def map_summary(
                     )
                 )
 
-        _cache_set(cache_key, items)
-        return MapSummaryResponse(items=items)
+        payload = MapSummaryResponse(items=items)
+        cache_set(
+            cache_key,
+            payload,
+            ttl=settings.CACHE_TTL_MAP_SUMMARY,
+            cache_name="map.summary",
+        )
+        return payload
 
 
 @router.get("/drilldown", response_model=MapDrilldownResponse)
@@ -520,6 +514,31 @@ def map_drilldown(
         environment_id=env_id,
         category=category,
     ):
+        cache_key = build_cache_key(
+            "map.drilldown",
+            tenant_id=tenant_id,
+            db_scope=db_scope_id(db),
+            filters={
+                "from": from_ts,
+                "to": to_ts,
+                "website_id": website_id,
+                "env_id": env_id,
+                "category": category,
+                "severity": severity,
+                "bucket_start": bucket_start,
+                "country_code": country_code,
+                "lat": lat,
+                "lon": lon,
+                "radius_km": radius_km,
+                "geo_enabled": geo_enabled,
+                "include_demo": include_demo,
+                "plan_key": entitlements.get("plan_key"),
+            },
+        )
+        cached = cache_get(cache_key, cache_name="map.drilldown")
+        if cached is not None:
+            return MapDrilldownResponse(**cached)
+
         base_query = db.query(GeoEventAgg).filter(GeoEventAgg.tenant_id == tenant_id)
         if not include_demo:
             base_query = base_query.filter(GeoEventAgg.is_demo.is_(False))
@@ -533,7 +552,6 @@ def map_drilldown(
             base_query = base_query.filter(GeoEventAgg.severity == severity)
         base_query = _apply_time_filters(base_query, GeoEventAgg.bucket_start, from_ts, to_ts)
         if bucket_start:
-            bucket_start = _normalize_ts(bucket_start)
             base_query = base_query.filter(GeoEventAgg.bucket_start == bucket_start)
         base_query = _apply_location_filter(
             base_query,
@@ -640,10 +658,17 @@ def map_drilldown(
                 include_demo=include_demo,
             )
 
-        return MapDrilldownResponse(
+        payload = MapDrilldownResponse(
             countries=countries,
             cities=cities,
             asns=asns,
             ip_hashes=ip_hashes,
             paths=paths,
         )
+        cache_set(
+            cache_key,
+            payload,
+            ttl=settings.CACHE_TTL_MAP_DRILLDOWN,
+            cache_name="map.drilldown",
+        )
+        return payload

@@ -19,7 +19,10 @@ from app.core.db import Base
 from app.core.security import get_password_hash
 from app.core.usage import (
     get_or_create_current_period_usage,
+    increment_aggregate_rows,
     increment_events,
+    increment_raw_events,
+    increment_sampled_out,
     increment_storage,
 )
 from app.crud.memberships import create_membership
@@ -65,6 +68,9 @@ def test_usage_record_created_for_month():
         assert usage.period_start.month == 5
         assert usage.period_start.day == 1
         assert usage.events_ingested == 0
+        assert usage.events_sampled_out == 0
+        assert usage.raw_events_stored == 0
+        assert usage.aggregate_rows_stored == 0
         assert usage.storage_bytes == 0
 
 
@@ -74,6 +80,9 @@ def test_increment_updates_counters():
     with SessionLocal() as db:
         tenant = create_tenant(db, name="Umbrella")
         increment_events(tenant.id, 3, db=db)
+        increment_sampled_out(tenant.id, 2, db=db)
+        increment_raw_events(tenant.id, 3, db=db)
+        increment_aggregate_rows(tenant.id, 1, db=db)
         increment_storage(tenant.id, 2048, db=db)
         usage = (
             db.query(TenantUsage)
@@ -82,6 +91,9 @@ def test_increment_updates_counters():
         )
         assert usage is not None
         assert usage.events_ingested == 3
+        assert usage.events_sampled_out == 2
+        assert usage.raw_events_stored == 3
+        assert usage.aggregate_rows_stored == 1
         assert usage.storage_bytes == 2048
 
 

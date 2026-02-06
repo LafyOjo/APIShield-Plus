@@ -5,6 +5,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
+from app.core.cache import build_cache_key, cache_delete, cache_get, cache_set, db_scope_id
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.entitlements import resolve_effective_entitlements
@@ -99,6 +100,43 @@ def _resolve_tenant_id(db: Session, tenant_hint: str) -> int:
     return _resolve_tenant(db, tenant_hint).id
 
 
+def _incident_detail_cache_key(
+    db: Session,
+    *,
+    tenant_id: int,
+    incident_id: int,
+    include_demo: bool,
+) -> str:
+    return build_cache_key(
+        "incidents.detail",
+        tenant_id=tenant_id,
+        db_scope=db_scope_id(db),
+        filters={
+            "incident_id": incident_id,
+            "include_demo": include_demo,
+        },
+    )
+
+
+def _clear_incident_detail_cache(db: Session, *, tenant_id: int, incident_id: int) -> None:
+    cache_delete(
+        _incident_detail_cache_key(
+            db,
+            tenant_id=tenant_id,
+            incident_id=incident_id,
+            include_demo=False,
+        )
+    )
+    cache_delete(
+        _incident_detail_cache_key(
+            db,
+            tenant_id=tenant_id,
+            incident_id=incident_id,
+            include_demo=True,
+        )
+    )
+
+
 def _get_incident_or_404(
     db: Session,
     *,
@@ -154,6 +192,28 @@ def list_incidents(
         query = query.filter(Incident.last_seen_at >= from_ts)
     if to_ts:
         query = query.filter(Incident.first_seen_at <= to_ts)
+
+    cache_key = build_cache_key(
+        "incidents.list",
+        tenant_id=tenant_id,
+        db_scope=db_scope_id(db),
+        filters={
+            "status": status_value,
+            "category": category,
+            "severity": normalized_severity,
+            "from": from_ts,
+            "to": to_ts,
+            "website_id": website_id,
+            "env_id": env_id,
+            "limit": limit,
+            "offset": offset,
+            "include_demo": include_demo,
+        },
+    )
+    cached = cache_get(cache_key, cache_name="incidents.list")
+    if cached is not None:
+        return cached
+
     rows = query.order_by(Incident.last_seen_at.desc()).offset(offset).limit(limit).all()
 
     impact_ids = [row.impact_estimate_id for row in rows if row.impact_estimate_id]
@@ -195,6 +255,12 @@ def list_incidents(
                 impact_summary=impact_summary,
             )
         )
+    cache_set(
+        cache_key,
+        items,
+        ttl=settings.CACHE_TTL_INCIDENTS_LIST,
+        cache_name="incidents.list",
+    )
     return items
 
 
@@ -208,6 +274,16 @@ def get_incident(
     tenant = _resolve_tenant(db, ctx.tenant_id)
     tenant_id = tenant.id
     include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
+    cache_key = _incident_detail_cache_key(
+        db,
+        tenant_id=tenant_id,
+        incident_id=incident_id,
+        include_demo=include_demo,
+    )
+    cached = cache_get(cache_key, cache_name="incidents.detail")
+    if cached is not None:
+        return IncidentRead(**cached)
+
     incident = _get_incident_or_404(
         db,
         tenant_id=tenant_id,
@@ -374,7 +450,7 @@ def get_incident(
         for preset in presets
     ]
 
-    return IncidentRead(
+    payload = IncidentRead(
         id=incident.id,
         status=incident.status,
         category=incident.category,
@@ -403,6 +479,13 @@ def get_incident(
         created_at=incident.created_at,
         updated_at=incident.updated_at,
     )
+    cache_set(
+        cache_key,
+        payload,
+        ttl=settings.CACHE_TTL_INCIDENT_DETAIL,
+        cache_name="incidents.detail",
+    )
+    return payload
 
 
 @router.post("/{incident_id}/prescriptions/generate", response_model=PrescriptionBundleRead)
@@ -474,6 +557,7 @@ def generate_incident_prescriptions(
         )
         for item in items
     ]
+    _clear_incident_detail_cache(db, tenant_id=tenant_id, incident_id=incident_id)
     return PrescriptionBundleRead(
         id=bundle.id,
         status=bundle.status,
@@ -513,6 +597,7 @@ def update_incident(
 
     db.commit()
     db.refresh(incident)
+    _clear_incident_detail_cache(db, tenant_id=tenant_id, incident_id=incident_id)
     return incident
 
 
@@ -611,6 +696,7 @@ def run_verification(
     )
 
     run = evaluate_verification(db, incident=incident)
+    _clear_incident_detail_cache(db, tenant_id=tenant_id, incident_id=incident_id)
     return VerificationCheckRunRead(
         id=run.id,
         incident_id=run.incident_id,

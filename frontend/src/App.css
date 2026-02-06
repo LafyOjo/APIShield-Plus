@@ -75,6 +75,7 @@ body {
 /* Forms */
 label { display: block; font-weight: 600; margin-bottom: 6px; }
 input[type="text"],
+input[type="email"],
 input[type="password"],
 input[type="number"],
 input[type="datetime-local"],
@@ -2471,6 +2472,22 @@ button[aria-disabled="true"] {
   gap: 6px;
 }
 
+.partner-form {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--card-bg) 92%, transparent);
+  display: grid;
+  gap: 12px;
+}
+
+.partner-form-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
 .table-wrapper {
   overflow-x: auto;
 }
@@ -2478,4 +2495,119 @@ button[aria-disabled="true"] {
 .partner-table th,
 .partner-table td {
   font-size: 13px;
+}
+
+.brand-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+}
+
+.branding-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.branding-tenant {
+  min-width: 220px;
+}
+
+.branding-form {
+  display: grid;
+  gap: 12px;
+}
+
+.branding-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.branding-domain {
+  display: grid;
+  gap: 12px;
+}
+
+.branding-domain-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.branding-dns-record {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+  background: color-mix(in oklab, var(--card-bg) 92%, transparent);
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  text-transform: uppercase;
+  color: var(--muted);
+  background: color-mix(in oklab, var(--card-bg) 80%, var(--border) 20%);
+}
+
+/* Portfolio scorecards */
+.portfolio-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.portfolio-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.portfolio-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+.portfolio-score {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.portfolio-domain {
+  font-weight: 600;
+}
+
+.portfolio-notice {
+  grid-column: 1 / -1;
 }

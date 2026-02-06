@@ -10,6 +10,7 @@ from app.core.referrals import process_referral_conversion
 from app.core.affiliates import process_affiliate_conversion, void_affiliate_commission
 from app.core.db import get_db
 from app.crud.plans import get_plan_by_name
+from app.crud.resellers import get_managed_tenant, get_reseller_account
 from app.crud.subscriptions import (
     get_latest_subscription_for_tenant,
     get_subscription_by_stripe_ids,
@@ -59,6 +60,18 @@ def _require_stripe_key() -> None:
             detail="Stripe is not configured",
         )
     stripe.api_key = settings.STRIPE_SECRET_KEY
+
+
+def _block_reseller_managed_billing(db: Session, tenant_id: int) -> None:
+    managed = get_managed_tenant(db, tenant_id=tenant_id)
+    if not managed:
+        return
+    account = get_reseller_account(db, partner_id=managed.reseller_partner_id)
+    if account and account.billing_mode == "reseller_pays_invoice":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Billing is managed by your reseller",
+        )
 
 
 def _require_webhook_secret() -> None:
@@ -128,6 +141,7 @@ def create_checkout_session(
     ),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
+    _block_reseller_managed_billing(db, tenant_id)
     plan_key = normalize_plan_key(payload.plan_key)
     if not plan_key:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Plan key is required")
@@ -185,6 +199,7 @@ def create_portal_session(
     ),
 ):
     tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
+    _block_reseller_managed_billing(db, tenant_id)
     subscription = get_latest_subscription_for_tenant(db, tenant_id)
     if not subscription or not subscription.stripe_customer_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stripe customer not found")

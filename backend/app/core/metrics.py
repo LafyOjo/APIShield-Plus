@@ -5,7 +5,7 @@
 from time import monotonic
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Histogram, Gauge
 from collections import defaultdict
 from app.core.security import decode_access_token
 
@@ -90,10 +90,66 @@ NOTIFICATIONS_FAILED_TOTAL = Counter(
     ["channel_type", "trigger_type"],
 )
 
+CACHE_HIT_TOTAL = Counter(
+    "cache_hit_total",
+    "Cache hits by cache name",
+    ["cache"],
+)
+CACHE_MISS_TOTAL = Counter(
+    "cache_miss_total",
+    "Cache misses by cache name",
+    ["cache"],
+)
+CACHE_SET_TOTAL = Counter(
+    "cache_set_total",
+    "Cache sets by cache name",
+    ["cache"],
+)
+CACHE_PAYLOAD_BYTES = Histogram(
+    "cache_payload_bytes",
+    "Cached payload size in bytes",
+    ["cache"],
+    buckets=[100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000],
+)
+
 JOB_RUN_TOTAL = Counter(
     "job_run_total",
     "Background job runs",
     ["job_name", "status"],
+)
+
+QUEUE_DEPTH = Gauge(
+    "queue_depth",
+    "Queued jobs by queue",
+    ["queue"],
+)
+QUEUE_JOB_TOTAL = Counter(
+    "queue_job_total",
+    "Queue jobs processed",
+    ["queue", "job_type", "status"],
+)
+QUEUE_RETRY_TOTAL = Counter(
+    "queue_retry_total",
+    "Queue jobs retried",
+    ["queue", "job_type"],
+)
+QUEUE_WAIT_SECONDS = Histogram(
+    "queue_wait_seconds",
+    "Time a job spent waiting in queue",
+    ["queue", "job_type"],
+    buckets=[1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600],
+)
+QUEUE_RUN_SECONDS = Histogram(
+    "queue_run_seconds",
+    "Queue job runtime in seconds",
+    ["queue", "job_type"],
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60],
+)
+
+SLOW_QUERY_TOTAL = Counter(
+    "slow_query_total",
+    "Slow query count",
+    ["route", "method"],
 )
 
 # Per-user API call totals. Prometheus gives us timeseries, and
@@ -228,8 +284,62 @@ def record_notification_delivery(
         NOTIFICATIONS_FAILED_TOTAL.labels(**labels).inc()
 
 
+def record_cache_hit(cache_name: str) -> None:
+    CACHE_HIT_TOTAL.labels(cache=_label(cache_name, "default")).inc()
+
+
+def record_cache_miss(cache_name: str) -> None:
+    CACHE_MISS_TOTAL.labels(cache=_label(cache_name, "default")).inc()
+
+
+def record_cache_set(cache_name: str, payload_bytes: int | None = None) -> None:
+    CACHE_SET_TOTAL.labels(cache=_label(cache_name, "default")).inc()
+    if payload_bytes is not None:
+        CACHE_PAYLOAD_BYTES.labels(cache=_label(cache_name, "default")).observe(payload_bytes)
+
+
 def record_job_run(*, job_name: str, success: bool) -> None:
     JOB_RUN_TOTAL.labels(
         job_name=_label(job_name),
         status="success" if success else "failure",
+    ).inc()
+
+
+def record_queue_depth(queue_name: str, depth: int) -> None:
+    QUEUE_DEPTH.labels(queue=_label(queue_name)).set(depth)
+
+
+def record_queue_job(queue_name: str, job_type: str, *, status: str) -> None:
+    QUEUE_JOB_TOTAL.labels(
+        queue=_label(queue_name),
+        job_type=_label(job_type),
+        status=_label(status),
+    ).inc()
+
+
+def record_queue_retry(queue_name: str, job_type: str) -> None:
+    QUEUE_RETRY_TOTAL.labels(
+        queue=_label(queue_name),
+        job_type=_label(job_type),
+    ).inc()
+
+
+def record_queue_wait(queue_name: str, job_type: str, seconds: float) -> None:
+    QUEUE_WAIT_SECONDS.labels(
+        queue=_label(queue_name),
+        job_type=_label(job_type),
+    ).observe(seconds)
+
+
+def record_queue_runtime(queue_name: str, job_type: str, seconds: float) -> None:
+    QUEUE_RUN_SECONDS.labels(
+        queue=_label(queue_name),
+        job_type=_label(job_type),
+    ).observe(seconds)
+
+
+def record_slow_query(route: str | None, method: str | None) -> None:
+    SLOW_QUERY_TOTAL.labels(
+        route=_label(route),
+        method=_label(method),
     ).inc()

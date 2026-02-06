@@ -6,6 +6,8 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.crud.audit import create_audit_log
 from app.crud.trust_badges import get_or_create_badge_config, upsert_badge_config
+from app.crud.tenant_branding import get_branding
+from app.core.branding import resolve_effective_badge_branding_mode
 from app.crud.websites import get_website
 from app.entitlements.resolver import resolve_entitlements_for_tenant
 from app.models.enums import RoleEnum
@@ -30,10 +32,11 @@ def _response_payload(
     config,
     *,
     plan_key: str | None,
+    branding_mode: str | None,
     request: Request,
 ) -> TrustBadgeConfigRead:
     payload = serialize_badge_config(config)
-    payload = apply_badge_policy_to_payload(payload, plan_key)
+    payload = apply_badge_policy_to_payload(payload, plan_key, branding_mode=branding_mode)
     script_url = _build_script_url(request, payload["website_id"])
     payload["script_url"] = script_url
     payload["script_tag"] = _build_script_tag(script_url)
@@ -56,7 +59,17 @@ def get_badge_config_endpoint(
 
     config = get_or_create_badge_config(db, membership.tenant_id, website_id)
     entitlements = resolve_entitlements_for_tenant(db, membership.tenant_id)
-    return _response_payload(config, plan_key=entitlements.get("plan_key"), request=request)
+    branding = get_branding(db, membership.tenant_id)
+    branding_mode = resolve_effective_badge_branding_mode(
+        branding.badge_branding_mode if branding else None,
+        entitlements.get("plan_key"),
+    )
+    return _response_payload(
+        config,
+        plan_key=entitlements.get("plan_key"),
+        branding_mode=branding_mode,
+        request=request,
+    )
 
 
 @router.post("/badges/config", response_model=TrustBadgeConfigRead)
@@ -76,12 +89,18 @@ def upsert_badge_config_endpoint(
     updates = payload.dict(exclude_unset=True)
     website_id = updates.pop("website_id")
     entitlements = resolve_entitlements_for_tenant(db, membership.tenant_id)
+    branding = get_branding(db, membership.tenant_id)
+    branding_mode = resolve_effective_badge_branding_mode(
+        branding.badge_branding_mode if branding else None,
+        entitlements.get("plan_key"),
+    )
     config = upsert_badge_config(
         db,
         tenant_id=membership.tenant_id,
         website_id=website_id,
         updates=updates,
         plan_key=entitlements.get("plan_key"),
+        branding_mode=branding_mode,
     )
     create_audit_log(
         db,
@@ -90,4 +109,9 @@ def upsert_badge_config_endpoint(
         event=f"trust_badge_config_updated:{website_id}",
         request=request,
     )
-    return _response_payload(config, plan_key=entitlements.get("plan_key"), request=request)
+    return _response_payload(
+        config,
+        plan_key=entitlements.get("plan_key"),
+        branding_mode=branding_mode,
+        request=request,
+    )

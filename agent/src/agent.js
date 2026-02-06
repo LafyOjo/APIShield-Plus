@@ -14,6 +14,12 @@ const DEFAULT_FLUSH_MAX_EVENTS = 20;
 const DEFAULT_SCROLL_STEP = 10;
 const DEFAULT_SCROLL_THROTTLE_MS = 1000;
 const DEFAULT_INCLUDE_STACK_HINTS = true;
+const DEFAULT_COMPRESS_PAYLOAD = true;
+const DEFAULT_COMPRESS_THRESHOLD_BYTES = 1024;
+const DEFAULT_RETRY_MAX_ATTEMPTS = 3;
+const DEFAULT_RETRY_BACKOFF_MS = 1000;
+const DEFAULT_RETRY_MAX_DELAY_MS = 10000;
+const DEFAULT_RETRY_JITTER_MS = 200;
 
 const META_ALLOWLIST = {
   [EVENT_TYPES.CLICK]: ["tag", "id", "classes"],
@@ -112,6 +118,36 @@ function resolveIngestUrl(explicitUrl) {
   const buildUrl =
     typeof __AGENT_INGEST_URL__ !== "undefined" ? __AGENT_INGEST_URL__ : "";
   return buildUrl || "/api/v1/ingest/browser";
+}
+
+function supportsCompression() {
+  return (
+    typeof CompressionStream !== "undefined" &&
+    typeof Blob !== "undefined" &&
+    typeof Response !== "undefined"
+  );
+}
+
+async function encodePayload(payload, headers, config, state) {
+  const text = JSON.stringify(payload);
+  if (!config.compressPayload || !state.supportsCompression) {
+    return { body: text, headers };
+  }
+  if (text.length < config.compressThresholdBytes) {
+    return { body: text, headers };
+  }
+  try {
+    const stream = new Blob([text], { type: "application/json" })
+      .stream()
+      .pipeThrough(new CompressionStream("gzip"));
+    const buffer = await new Response(stream).arrayBuffer();
+    return {
+      body: buffer,
+      headers: { ...headers, "Content-Encoding": "gzip" },
+    };
+  } catch (_err) {
+    return { body: text, headers };
+  }
 }
 
 function detectStackHints() {
@@ -275,6 +311,12 @@ function createAgent(userConfig = {}) {
     dropUrlQuery: true,
     allowBatch: true,
     includeStackHints: DEFAULT_INCLUDE_STACK_HINTS,
+    compressPayload: DEFAULT_COMPRESS_PAYLOAD,
+    compressThresholdBytes: DEFAULT_COMPRESS_THRESHOLD_BYTES,
+    maxRetryAttempts: DEFAULT_RETRY_MAX_ATTEMPTS,
+    retryBackoffMs: DEFAULT_RETRY_BACKOFF_MS,
+    retryMaxDelayMs: DEFAULT_RETRY_MAX_DELAY_MS,
+    retryJitterMs: DEFAULT_RETRY_JITTER_MS,
     metaAllowlist: META_ALLOWLIST,
     ...userConfig,
   };
@@ -291,6 +333,10 @@ function createAgent(userConfig = {}) {
     lastScrollPercent: 0,
     active: false,
     stackHints: config.includeStackHints ? detectStackHints() : null,
+    supportsCompression: supportsCompression(),
+    retryCounts: new Map(),
+    retryTimer: null,
+    retryDelayMs: config.retryBackoffMs,
   };
 
   function buildEvent(type, meta, referrerOverride) {
@@ -345,36 +391,141 @@ function createAgent(userConfig = {}) {
     }
   }
 
+  function shouldRetryResponse(resp) {
+    if (!resp) {
+      return true;
+    }
+    if (resp.status >= 500) {
+      return true;
+    }
+    return resp.status === 429 || resp.status === 408;
+  }
+
+  function resetRetryBackoff() {
+    state.retryDelayMs = config.retryBackoffMs;
+    if (state.retryTimer) {
+      clearTimeout(state.retryTimer);
+      state.retryTimer = null;
+    }
+  }
+
+  function markRetrySuccess(events) {
+    for (const event of events) {
+      if (event && event.event_id) {
+        state.retryCounts.delete(event.event_id);
+      }
+    }
+  }
+
+  function enqueueRetry(events) {
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      state.queue.unshift(events[i]);
+    }
+    if (state.queue.length > config.maxQueueSize) {
+      state.queue.length = config.maxQueueSize;
+    }
+  }
+
+  function scheduleRetry(events) {
+    const retryable = [];
+    for (const event of events) {
+      if (!event || !event.event_id) {
+        continue;
+      }
+      const attempts = (state.retryCounts.get(event.event_id) || 0) + 1;
+      if (attempts > config.maxRetryAttempts) {
+        state.retryCounts.delete(event.event_id);
+        continue;
+      }
+      state.retryCounts.set(event.event_id, attempts);
+      retryable.push(event);
+    }
+    if (!retryable.length) {
+      return;
+    }
+    enqueueRetry(retryable);
+    if (state.retryTimer) {
+      return;
+    }
+    const jitter =
+      config.retryJitterMs > 0
+        ? Math.floor(Math.random() * config.retryJitterMs)
+        : 0;
+    const delay = Math.min(state.retryDelayMs, config.retryMaxDelayMs) + jitter;
+    state.retryTimer = setTimeout(() => {
+      state.retryTimer = null;
+      state.retryDelayMs = Math.min(
+        state.retryDelayMs * 2,
+        config.retryMaxDelayMs,
+      );
+      flush();
+    }, delay);
+  }
+
   async function sendEvents(events, useKeepalive) {
     if (!events.length) {
       return true;
     }
-    const headers = {
+    const baseHeaders = {
       "Content-Type": "application/json",
       "X-Api-Key": state.apiKey,
     };
     if (state.supportsBatch && config.allowBatch && events.length > 1) {
+      const { body, headers } = await encodePayload(
+        { events },
+        baseHeaders,
+        config,
+        state,
+      );
       const resp = await fetch(state.ingestUrl, {
         method: "POST",
         headers,
-        body: JSON.stringify({ events }),
+        body,
         keepalive: useKeepalive,
       }).catch(() => null);
       if (resp && resp.ok) {
+        markRetrySuccess(events);
+        resetRetryBackoff();
         return true;
       }
       if (resp && [400, 404, 415, 422].includes(resp.status)) {
         state.supportsBatch = false;
       }
+      if (resp && [401, 403].includes(resp.status)) {
+        return false;
+      }
+      if (shouldRetryResponse(resp)) {
+        scheduleRetry(events);
+        return false;
+      }
     }
+    const failedEvents = [];
     for (const event of events) {
-      await fetch(state.ingestUrl, {
+      const { body, headers } = await encodePayload(
+        event,
+        baseHeaders,
+        config,
+        state,
+      );
+      const resp = await fetch(state.ingestUrl, {
         method: "POST",
         headers,
-        body: JSON.stringify(event),
+        body,
         keepalive: useKeepalive,
       }).catch(() => null);
+      if (resp && resp.ok) {
+        markRetrySuccess([event]);
+        continue;
+      }
+      if (shouldRetryResponse(resp)) {
+        failedEvents.push(event);
+      }
     }
+    if (failedEvents.length) {
+      scheduleRetry(failedEvents);
+      return false;
+    }
+    resetRetryBackoff();
     return true;
   }
 

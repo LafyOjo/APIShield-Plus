@@ -153,7 +153,7 @@ def test_ingest_blocks_when_over_limit_free_plan():
         json=_payload("https://quota.example.com/"),
         headers={"X-Api-Key": public_key},
     )
-    assert resp.status_code == 402
+    assert resp.status_code == 429
 
 
 def test_storage_bytes_estimate_increments_if_enabled():

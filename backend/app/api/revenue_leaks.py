@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
+from app.core.cache import build_cache_key, cache_get, cache_set, db_scope_id
 from app.core.config import settings
 from app.core.db import get_db
 from app.crud.tenants import get_tenant_by_id, get_tenant_by_slug
@@ -161,6 +162,25 @@ def list_revenue_leaks(
         from_ts, to_ts = to_ts, from_ts
 
     path_value, has_path_filter = _normalize_path(path)
+    cache_key = build_cache_key(
+        "revenue.leaks",
+        tenant_id=tenant_id,
+        db_scope=db_scope_id(db),
+        filters={
+            "from": from_ts,
+            "to": to_ts,
+            "website_id": website_id,
+            "env_id": env_id,
+            "path": path_value,
+            "has_path_filter": has_path_filter,
+            "limit": limit,
+            "include_demo": include_demo,
+            "plan_key": entitlements.get("plan_key"),
+        },
+    )
+    cached = cache_get(cache_key, cache_name="revenue.leaks")
+    if cached is not None:
+        return RevenueLeakResponse(**cached)
 
     query = db.query(RevenueLeakEstimate).filter(RevenueLeakEstimate.tenant_id == tenant_id)
     if not include_demo:
@@ -180,7 +200,14 @@ def list_revenue_leaks(
     )
     rows = query.all()
     if not rows:
-        return RevenueLeakResponse(items=[], series=[])
+        payload = RevenueLeakResponse(items=[], series=[])
+        cache_set(
+            cache_key,
+            payload,
+            ttl=settings.CACHE_TTL_REVENUE_LEAKS,
+            cache_name="revenue.leaks",
+        )
+        return payload
 
     aggregates: dict[tuple[Optional[str], int, int], _LeakAggregate] = {}
     for row in rows:
@@ -280,4 +307,11 @@ def list_revenue_leaks(
     if has_path_filter:
         series = _build_series(rows)
 
-    return RevenueLeakResponse(items=items, series=series)
+    payload = RevenueLeakResponse(items=items, series=series)
+    cache_set(
+        cache_key,
+        payload,
+        ttl=settings.CACHE_TTL_REVENUE_LEAKS,
+        cache_name="revenue.leaks",
+    )
+    return payload

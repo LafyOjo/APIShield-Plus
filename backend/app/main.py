@@ -22,6 +22,7 @@ from app.core.re_auth import ReAuthMiddleware
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.core.startup_checks import run_startup_checks
 from app.core.versioning import API_PREFIX, API_V1_PREFIX
+from app.core.perf_response import PerfJSONResponse
 from app.entitlements.enforcement import FeatureNotEnabled, PlanLimitExceeded, RangeClampedNotice
 
 # Bring in all routers (grouped by feature area)
@@ -39,6 +40,7 @@ from app.api.auth_events import router as auth_events_router
 from app.api.api_keys import router as api_keys_router
 from app.api.invites import router as invites_router
 from app.api.tenant_settings import router as tenant_settings_router
+from app.api.branding import router as branding_router
 from app.api.usage import router as usage_router
 from app.api.data_retention import router as data_retention_router
 from app.api.tenant_retention import router as tenant_retention_router
@@ -62,6 +64,7 @@ from app.api.map import router as map_router
 from app.api.incidents import router as incidents_router
 from app.api.trust import router as trust_router
 from app.api.revenue_leaks import router as revenue_leaks_router
+from app.api.portfolio import router as portfolio_router
 from app.api.prescriptions import router as prescriptions_router
 from app.api.notifications import router as notifications_router
 from app.api.badges import router as badges_router
@@ -76,6 +79,7 @@ from app.api.demo import router as demo_router
 from app.api.docs import router as docs_router
 from app.api.public_docs import router as public_docs_router
 from app.api.public_badge import router as public_badge_router
+from app.api.public_score import router as public_score_router
 from app.api.integrations_directory import (
     router as integrations_directory_router,
     public_router as integrations_public_router,
@@ -87,7 +91,10 @@ from app.api.marketplace import (
 from app.api.marketplace_admin import router as marketplace_admin_router
 from app.api.referrals import router as referrals_router
 from app.api.admin_affiliates import router as admin_affiliates_router
+from app.api.admin_queue import router as admin_queue_router
+from app.api.admin_perf import router as admin_perf_router
 from app.api.partners import router as partners_router
+from app.api.reseller import router as reseller_router
 
 # Billing router depends on optional Stripe install.
 try:
@@ -101,7 +108,12 @@ if os.getenv("SKIP_MIGRATIONS") != "1":
     Base.metadata.create_all(bind=engine)
 
 # Spin up the FastAPI app. Title shows in Swagger docs.
-app = FastAPI(title="APIShield+", docs_url=None, redoc_url=None)
+app = FastAPI(
+    title="APIShield+",
+    docs_url=None,
+    redoc_url=None,
+    default_response_class=PerfJSONResponse,
+)
 
 
 @app.on_event("startup")
@@ -170,6 +182,7 @@ routers = [
     api_keys_router,
     invites_router,
     tenant_settings_router,
+    branding_router,
     usage_router,
     data_retention_router,
     tenant_retention_router,
@@ -191,6 +204,7 @@ routers = [
     incidents_router,
     trust_router,
     revenue_leaks_router,
+    portfolio_router,
     prescriptions_router,
     notifications_router,
     badges_router,
@@ -204,7 +218,10 @@ routers = [
     marketplace_router,
     referrals_router,
     admin_affiliates_router,
+    admin_queue_router,
+    admin_perf_router,
     partners_router,
+    reseller_router,
     marketplace_admin_router,
 ]
 
@@ -223,6 +240,7 @@ api_root.include_router(scim_router)
 api_root.include_router(status_page_router)
 api_root.include_router(public_docs_router)
 api_root.include_router(public_badge_router)
+api_root.include_router(public_score_router)
 api_root.include_router(integrations_public_router)
 api_root.include_router(marketplace_public_router)
 

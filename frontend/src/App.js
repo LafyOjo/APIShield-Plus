@@ -7,8 +7,9 @@
 # Basically, it’s the glue between the UI pieces and the backend API.
 */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ACTIVE_TENANT_KEY, AUTH_TOKEN_KEY, USERNAME_KEY, apiFetch, logAuditEvent } from "./api";
+import { captureNavigationTimings, markDashboardReady } from "./perf";
 import ScoreForm from "./ScoreForm";
 import AlertsTable from "./AlertsTable";
 import EventsTable from "./EventsTable";
@@ -27,8 +28,10 @@ import RevenueLeakHeatmapPage from "./RevenueLeakHeatmapPage";
 import WebsiteSettingsPage from "./WebsiteSettingsPage";
 import OnboardingWizardPage from "./OnboardingWizardPage";
 import NotificationsSettingsPage from "./NotificationsSettingsPage";
+import BrandingSettingsPage from "./BrandingSettingsPage";
 import BillingPage from "./BillingPage";
 import ReferralProgramPage from "./ReferralProgramPage";
+import PortfolioPage from "./PortfolioPage";
 import ComplianceAuditPage from "./ComplianceAuditPage";
 import ComplianceRetentionPage from "./ComplianceRetentionPage";
 import AdminConsolePage from "./AdminConsolePage";
@@ -60,6 +63,7 @@ function App() {
   */
   const [refreshKey, setRefreshKey] = useState(0);
   const [currentRoute, setCurrentRoute] = useState(window.location.pathname);
+  const perfDashboardMarked = useRef(false);
 
   /*
   # token keeps track of whether a user is logged in.
@@ -70,6 +74,10 @@ function App() {
   const [token, setToken] = useState(localStorage.getItem(AUTH_TOKEN_KEY));
   const [partnerProfile, setPartnerProfile] = useState(null);
   const [partnerChecked, setPartnerChecked] = useState(false);
+  const [activeTenantId, setActiveTenantId] = useState(
+    localStorage.getItem(ACTIVE_TENANT_KEY) || ""
+  );
+  const [branding, setBranding] = useState(null);
 
   useEffect(() => {
     const hashParams = new URLSearchParams(
@@ -89,6 +97,10 @@ function App() {
       ? "/"
       : window.location.pathname;
     window.history.replaceState({}, "", cleanPath);
+  }, []);
+
+  useEffect(() => {
+    captureNavigationTimings();
   }, []);
 
   /*
@@ -138,6 +150,14 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const interval = setInterval(() => {
+      const current = localStorage.getItem(ACTIVE_TENANT_KEY) || "";
+      setActiveTenantId((prev) => (prev === current ? prev : current));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
     const handlePop = () => setCurrentRoute(window.location.pathname);
     window.addEventListener("popstate", handlePop);
     return () => window.removeEventListener("popstate", handlePop);
@@ -152,6 +172,14 @@ function App() {
   useEffect(() => {
     setRefreshKey((k) => k + 1);
   }, [token]);
+
+  useEffect(() => {
+    if (!token || perfDashboardMarked.current) return;
+    requestAnimationFrame(() => {
+      markDashboardReady({ route: currentRoute || "/" });
+      perfDashboardMarked.current = true;
+    });
+  }, [token, currentRoute]);
 
   /*
   # handleLogout()
@@ -205,6 +233,72 @@ function App() {
   }, [token]);
 
   useEffect(() => {
+    let active = true;
+    if (!token || partnerProfile) {
+      setBranding(null);
+      return () => {
+        active = false;
+      };
+    }
+    if (!activeTenantId) {
+      setBranding(null);
+      return () => {
+        active = false;
+      };
+    }
+    const loadBranding = async () => {
+      try {
+        const resp = await apiFetch("/api/v1/branding", { skipReauth: true });
+        if (!active) return;
+        if (!resp.ok) {
+          setBranding(null);
+          return;
+        }
+        const data = await resp.json();
+        if (active) setBranding(data);
+      } catch (err) {
+        if (active) setBranding(null);
+      }
+    };
+    loadBranding();
+    return () => {
+      active = false;
+    };
+  }, [token, partnerProfile, activeTenantId]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const applyColor = (name, value) => {
+      if (value) {
+        root.style.setProperty(name, value);
+      } else {
+        root.style.removeProperty(name);
+      }
+    };
+    const pickContrast = (hex) => {
+      if (!hex || !hex.startsWith("#") || hex.length !== 7) return null;
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      return luminance > 0.6 ? "#0b1220" : "#ffffff";
+    };
+    if (branding && branding.is_enabled) {
+      const accent = branding.primary_color || branding.accent_color;
+      applyColor("--accent", accent);
+      applyColor("--accent-contrast", pickContrast(accent));
+    } else {
+      applyColor("--accent", null);
+      applyColor("--accent-contrast", null);
+    }
+    if (branding && branding.is_enabled && branding.brand_name) {
+      document.title = `${branding.brand_name} Dashboard`;
+    } else {
+      document.title = "APIShield+ Dashboard";
+    }
+  }, [branding]);
+
+  useEffect(() => {
     if (partnerProfile && !currentRoute.startsWith("/partner")) {
       navigate("/partner");
     }
@@ -218,6 +312,7 @@ function App() {
     currentRoute.startsWith("/dashboard/security/events") ||
     currentRoute.startsWith("/security/events");
   const isNotificationsRoute = currentRoute.startsWith("/dashboard/settings/notifications");
+  const isBrandingRoute = currentRoute.startsWith("/dashboard/settings/branding");
   const isBillingRoute = currentRoute.startsWith("/billing");
   const isComplianceRoute =
     currentRoute.startsWith("/dashboard/compliance/audit") ||
@@ -227,6 +322,7 @@ function App() {
   const isReferralsRoute =
     currentRoute.startsWith("/dashboard/referrals") ||
     currentRoute.startsWith("/referrals");
+  const isPortfolioRoute = currentRoute.startsWith("/dashboard/portfolio");
   const websiteSettingsMatch = currentRoute.match(
     /^\/dashboard\/websites\/(\d+)\/settings/
   );
@@ -315,6 +411,10 @@ function App() {
     );
   }
 
+  const brandTitle =
+    branding && branding.is_enabled && branding.brand_name ? branding.brand_name : "APIShield+";
+  const brandLogo = branding && branding.is_enabled ? branding.logo_url : null;
+
   if (isPartnerRoute) {
     return (
       <div className="app-container stack">
@@ -354,13 +454,23 @@ function App() {
   return (
     <div className="app-container stack">
       <header className="header bar">
-        <h1 className="dashboard-header">APIShield+ Dashboard</h1>
+        <div className="brand-header">
+          {brandLogo && (
+            <img
+              src={brandLogo}
+              alt={`${brandTitle} logo`}
+              className="brand-logo"
+            />
+          )}
+          <h1 className="dashboard-header">{brandTitle} Dashboard</h1>
+        </div>
         <div className="row">
           <button
             className={`btn secondary nav-tab ${
               !isMapRoute && !isEventsRoute && !isRevenueRoute && !isNotificationsRoute
                 && !isBillingRoute && !isComplianceRoute && !isAdminRoute && !isWebsiteSettingsRoute
-                && !isOnboardingRoute && !isHelpRoute && !isMarketplaceRoute
+                && !isOnboardingRoute && !isHelpRoute && !isMarketplaceRoute && !isBrandingRoute
+                && !isPortfolioRoute
                 ? "active"
                 : ""
             }`}
@@ -385,6 +495,12 @@ function App() {
             onClick={() => navigate("/dashboard/revenue-integrity/incidents")}
           >
             Revenue Integrity
+          </button>
+          <button
+            className={`btn secondary nav-tab ${isPortfolioRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/portfolio")}
+          >
+            Portfolio
           </button>
           <button
             className={`btn secondary nav-tab ${isWebsiteSettingsRoute ? "active" : ""}`}
@@ -475,6 +591,12 @@ function App() {
             Notifications
           </button>
           <button
+            className={`btn secondary nav-tab ${isBrandingRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/settings/branding")}
+          >
+            Branding
+          </button>
+          <button
             className={`btn secondary nav-tab ${isReferralsRoute ? "active" : ""}`}
             onClick={() => navigate("/dashboard/referrals")}
           >
@@ -515,6 +637,10 @@ function App() {
         <SecurityEventsPage />
       ) : isNotificationsRoute ? (
         <NotificationsSettingsPage />
+      ) : isBrandingRoute ? (
+        <BrandingSettingsPage />
+      ) : isPortfolioRoute ? (
+        <PortfolioPage />
       ) : isReferralsRoute ? (
         <ReferralProgramPage />
       ) : isComplianceRoute ? (

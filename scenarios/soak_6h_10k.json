@@ -1,0 +1,36 @@
+{
+  "name": "soak_6h_10k",
+  "base_url": "http://localhost:8000",
+  "ingest_path": "/api/v1/ingest/browser",
+  "workers": 4,
+  "batch_size": 10,
+  "max_in_flight": 300,
+  "timeout_seconds": 10,
+  "session_pool_size": 50000,
+  "targets": [
+    {
+      "api_key": "pk_replace_me",
+      "domain": "example.com",
+      "weight": 1
+    }
+  ],
+  "event_mix": [
+    { "type": "page_view", "weight": 65 },
+    { "type": "click", "weight": 15 },
+    { "type": "scroll", "weight": 10 },
+    { "type": "form_submit", "weight": 5 },
+    { "type": "error", "weight": 3 },
+    { "type": "performance", "weight": 1 },
+    { "type": "login_attempt_succeeded", "weight": 1 },
+    { "type": "login_attempt_failed", "weight": 1 },
+    { "type": "csp_violation", "weight": 1 }
+  ],
+  "path_pool": ["/", "/pricing", "/checkout", "/login", "/signup", "/docs"],
+  "segments": [
+    { "duration_seconds": 21600, "rps": 10000 }
+  ],
+  "security_ingest_path": "/api/v1/ingest/integrity",
+  "metrics_path": "/metrics",
+  "output_json": "reports/soak_6h_10k.json",
+  "output_md": "reports/soak_6h_10k.md"
+}

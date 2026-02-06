@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch, ACTIVE_TENANT_KEY } from "./api";
 import GeoMapView from "./GeoMapView";
 import TourOverlay from "./TourOverlay";
@@ -7,6 +7,7 @@ import DemoDataToggle from "./DemoDataToggle";
 import { useDemoData } from "./useDemoData";
 import PaywallCard from "./components/PaywallCard";
 import PaywallModal from "./components/PaywallModal";
+import { recordPerfMetric } from "./perf";
 
 const TIME_RANGES = [
   { value: "24h", label: "Last 24 hours", days: 1 },
@@ -234,6 +235,7 @@ export default function SecurityMapPage() {
   const [drilldownError, setDrilldownError] = useState("");
   const [drilldownData, setDrilldownData] = useState(null);
   const [paywallConfig, setPaywallConfig] = useState(null);
+  const summaryStartRef = useRef(null);
   const mapTour = useTour("map", activeTenant);
 
   const mapTourSteps = useMemo(
@@ -703,6 +705,9 @@ export default function SecurityMapPage() {
     async function loadSummary() {
       setLoadingSummary(true);
       setError("");
+      if (typeof performance !== "undefined") {
+        summaryStartRef.current = performance.now();
+      }
       try {
         const params = new URLSearchParams();
         params.set("from", timeWindow.from.toISOString());
@@ -732,6 +737,15 @@ export default function SecurityMapPage() {
           items.length > 0 &&
             items.every((point) => point.latitude == null && point.longitude == null)
         );
+        if (summaryStartRef.current != null) {
+          const duration = performance.now() - summaryStartRef.current;
+          recordPerfMetric("map_summary_loaded_ms", duration, {
+            website_id: debouncedFilters.websiteId || null,
+            env_id: debouncedFilters.envId || null,
+            category: debouncedFilters.category || null,
+          });
+          summaryStartRef.current = null;
+        }
       } catch (err) {
         if (!mounted) return;
         setSummary([]);

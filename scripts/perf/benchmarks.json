@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "default_windows": {
+    "map_hours": 24,
+    "analytics_days": 7
+  },
+  "endpoints": [
+    {
+      "name": "incidents_list",
+      "method": "GET",
+      "path": "/api/v1/incidents",
+      "optional": false
+    },
+    {
+      "name": "incident_detail",
+      "method": "GET",
+      "path": "/api/v1/incidents/{incident_id}",
+      "optional": true,
+      "reason": "Requires an incident_id fixture"
+    },
+    {
+      "name": "map_summary",
+      "method": "GET",
+      "path": "/api/v1/map/summary",
+      "optional": false
+    },
+    {
+      "name": "map_drilldown",
+      "method": "GET",
+      "path": "/api/v1/map/drilldown",
+      "optional": false
+    },
+    {
+      "name": "revenue_leaks",
+      "method": "GET",
+      "path": "/api/v1/revenue/leaks",
+      "optional": false
+    },
+    {
+      "name": "trust_snapshots",
+      "method": "GET",
+      "path": "/api/v1/trust/snapshots",
+      "optional": false
+    },
+    {
+      "name": "portfolio_summary",
+      "method": "GET",
+      "path": "/api/v1/portfolio/summary",
+      "optional": true,
+      "reason": "Plan-gated or admin-only depending on environment"
+    }
+  ],
+  "smoke": [
+    {
+      "name": "ping",
+      "method": "GET",
+      "path": "/ping",
+      "optional": false
+    },
+    {
+      "name": "health",
+      "method": "GET",
+      "path": "/api/v1/health",
+      "optional": false
+    }
+  ]
+}

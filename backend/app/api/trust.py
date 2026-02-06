@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
+from app.core.cache import build_cache_key, cache_get, cache_set, db_scope_id
 from app.core.config import settings
 from app.core.db import get_db
 from app.models.enums import RoleEnum
@@ -50,6 +51,26 @@ def list_trust_snapshots(
 ):
     tenant = _resolve_tenant(db, ctx.tenant_id)
     include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
+    from_ts = _normalize_ts(from_ts)
+    to_ts = _normalize_ts(to_ts)
+    cache_key = build_cache_key(
+        "trust.snapshots",
+        tenant_id=tenant.id,
+        db_scope=db_scope_id(db),
+        filters={
+            "from": from_ts,
+            "to": to_ts,
+            "website_id": website_id,
+            "env_id": env_id,
+            "path": path,
+            "limit": limit,
+            "include_demo": include_demo,
+        },
+    )
+    cached = cache_get(cache_key, cache_name="trust.snapshots")
+    if cached is not None:
+        return cached
+
     query = db.query(TrustSnapshot).filter(TrustSnapshot.tenant_id == tenant.id)
     if not include_demo:
         query = query.filter(TrustSnapshot.is_demo.is_(False))
@@ -59,11 +80,16 @@ def list_trust_snapshots(
         query = query.filter(TrustSnapshot.environment_id == env_id)
     if path:
         query = query.filter(TrustSnapshot.path == path)
-    from_ts = _normalize_ts(from_ts)
-    to_ts = _normalize_ts(to_ts)
     if from_ts:
         query = query.filter(TrustSnapshot.bucket_start >= from_ts)
     if to_ts:
         query = query.filter(TrustSnapshot.bucket_start <= to_ts)
     rows = query.order_by(TrustSnapshot.bucket_start.asc()).limit(limit).all()
-    return rows
+    payload = [TrustSnapshotRead.from_orm(row) for row in rows]
+    cache_set(
+        cache_key,
+        payload,
+        ttl=settings.CACHE_TTL_TRUST_SNAPSHOTS,
+        cache_name="trust.snapshots",
+    )
+    return payload

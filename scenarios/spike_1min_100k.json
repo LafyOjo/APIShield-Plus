@@ -1,0 +1,42 @@
+{
+  "name": "spike_1min_100k",
+  "base_url": "http://localhost:8000",
+  "ingest_path": "/api/v1/ingest/browser",
+  "workers": 4,
+  "batch_size": 20,
+  "max_in_flight": 500,
+  "timeout_seconds": 5,
+  "session_pool_size": 200000,
+  "targets": [
+    {
+      "api_key": "pk_replace_me",
+      "domain": "example.com",
+      "weight": 1
+    }
+  ],
+  "event_mix": [
+    { "type": "page_view", "weight": 60 },
+    { "type": "click", "weight": 15 },
+    { "type": "scroll", "weight": 10 },
+    { "type": "form_submit", "weight": 5 },
+    { "type": "error", "weight": 5 },
+    { "type": "performance", "weight": 4 },
+    { "type": "login_attempt_succeeded", "weight": 1 },
+    { "type": "login_attempt_failed", "weight": 1 },
+    { "type": "csp_violation", "weight": 1 }
+  ],
+  "path_pool": ["/", "/pricing", "/checkout", "/login", "/signup", "/docs"],
+  "segments": [
+    { "duration_seconds": 60, "rps": 100000 }
+  ],
+  "security_ingest_path": "/api/v1/ingest/integrity",
+  "metrics_path": "/metrics",
+  "drain_check": {
+    "queues": ["critical", "standard", "bulk"],
+    "threshold": 0,
+    "timeout_seconds": 600,
+    "poll_interval_seconds": 15
+  },
+  "output_json": "reports/spike_1min_100k.json",
+  "output_md": "reports/spike_1min_100k.md"
+}

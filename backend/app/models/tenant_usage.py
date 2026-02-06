@@ -22,6 +22,9 @@ class TenantUsage(Base):
     period_start = Column(DateTime, nullable=False)
     period_end = Column(DateTime, nullable=True)
     events_ingested = Column(BigInteger, nullable=False, default=0)
+    events_sampled_out = Column(BigInteger, nullable=False, default=0)
+    raw_events_stored = Column(BigInteger, nullable=False, default=0)
+    aggregate_rows_stored = Column(BigInteger, nullable=False, default=0)
     storage_bytes = Column(BigInteger, nullable=False, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(

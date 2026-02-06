@@ -144,12 +144,23 @@ def _apply_dataset_retention_policies(
         return limits
     effective = dict(limits)
     dataset_limits: dict[str, int] = dict(effective.get("dataset_retention_days") or {})
+
+    def _resolve_limit_value(limit_key) -> int | None:
+        if not limit_key:
+            return None
+        keys = limit_key if isinstance(limit_key, (list, tuple)) else (limit_key,)
+        for key in keys:
+            value = _coerce_positive_int(effective.get(key))
+            if value is not None:
+                return value
+        return None
+
     for policy in policies:
         desired = _coerce_positive_int(policy.retention_days)
         if desired is None:
             continue
         limit_key = DATASET_RETENTION_LIMIT_KEYS.get(policy.dataset_key)
-        max_allowed = _coerce_positive_int(effective.get(limit_key)) if limit_key else None
+        max_allowed = _resolve_limit_value(limit_key)
         if max_allowed is None:
             dataset_limits[policy.dataset_key] = desired
         else:

@@ -13,7 +13,9 @@ from typing import Any
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.core.config import settings
 from app.core.security import decode_access_token
+from app.core.perf import finish_request, record_request_perf, start_request
 
 
 _STANDARD_ATTRS = {
@@ -110,42 +112,97 @@ def _resolve_user_id(request: Request) -> str | None:
 class APILoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         start = monotonic()
+        handler_start = monotonic()
+        perf_stats = None
+        if settings.PERF_PROFILING:
+            perf_stats = start_request(
+                route=request.url.path,
+                method=request.method,
+                request_id=getattr(request.state, "request_id", None),
+                tenant_id=getattr(request.state, "tenant_id", None),
+            )
         from app.core.tracing import get_trace_id, get_span_id
         try:
             response = await call_next(request)
         except Exception:
+            handler_time_ms = round((monotonic() - handler_start) * 1000.0, 2)
             duration_ms = round((monotonic() - start) * 1000.0, 2)
-            logger.exception(
-                "request.failed",
-                extra={
-                    "request_id": getattr(request.state, "request_id", None),
-                    "tenant_id": getattr(request.state, "tenant_id", None),
-                    "user_id": _resolve_user_id(request),
-                    "route": _resolve_route(request),
-                    "method": request.method,
-                    "status_code": 500,
-                    "duration_ms": duration_ms,
-                    "error_code": "unhandled_exception",
-                    "trace_id": get_trace_id(),
-                    "span_id": get_span_id(),
-                },
-            )
-            raise
-
-        duration_ms = round((monotonic() - start) * 1000.0, 2)
-        logger.info(
-            "request.completed",
-            extra={
+            if settings.PERF_PROFILING:
+                perf_stats = finish_request(handler_time_ms=handler_time_ms)
+            db_time_ms = round(perf_stats.db_time_ms, 2) if perf_stats else 0.0
+            db_queries_count = perf_stats.db_queries_count if perf_stats else 0
+            extra = {
                 "request_id": getattr(request.state, "request_id", None),
                 "tenant_id": getattr(request.state, "tenant_id", None),
                 "user_id": _resolve_user_id(request),
                 "route": _resolve_route(request),
+                "path": request.url.path,
                 "method": request.method,
-                "status_code": response.status_code,
+                "status_code": 500,
                 "duration_ms": duration_ms,
-                "error_code": response.headers.get("X-Error-Code"),
+                "error_code": "unhandled_exception",
                 "trace_id": get_trace_id(),
                 "span_id": get_span_id(),
-            },
+            }
+            if settings.PERF_PROFILING and perf_stats:
+                extra.update(
+                    {
+                        "db_time_ms": db_time_ms,
+                        "db_queries_count": db_queries_count,
+                        "handler_time_ms": perf_stats.handler_time_ms,
+                        "serialize_time_ms": perf_stats.serialize_time_ms,
+                        "slow_queries": perf_stats.slow_queries or None,
+                        "slow_queries_dropped": perf_stats.slow_queries_dropped or None,
+                    }
+                )
+            logger.exception("request.failed", extra=extra)
+            record_request_perf(
+                request_id=getattr(request.state, "request_id", None),
+                path=request.url.path,
+                status_code=500,
+                duration_ms=duration_ms,
+                db_time_ms=db_time_ms,
+                db_queries_count=db_queries_count,
+            )
+            raise
+
+        handler_time_ms = round((monotonic() - handler_start) * 1000.0, 2)
+        duration_ms = round((monotonic() - start) * 1000.0, 2)
+        if settings.PERF_PROFILING:
+            perf_stats = finish_request(handler_time_ms=handler_time_ms)
+        db_time_ms = round(perf_stats.db_time_ms, 2) if perf_stats else 0.0
+        db_queries_count = perf_stats.db_queries_count if perf_stats else 0
+        extra = {
+            "request_id": getattr(request.state, "request_id", None),
+            "tenant_id": getattr(request.state, "tenant_id", None),
+            "user_id": _resolve_user_id(request),
+            "route": _resolve_route(request),
+            "path": request.url.path,
+            "method": request.method,
+            "status_code": response.status_code,
+            "duration_ms": duration_ms,
+            "error_code": response.headers.get("X-Error-Code"),
+            "trace_id": get_trace_id(),
+            "span_id": get_span_id(),
+        }
+        if settings.PERF_PROFILING and perf_stats:
+            extra.update(
+                {
+                    "db_time_ms": db_time_ms,
+                    "db_queries_count": db_queries_count,
+                    "handler_time_ms": perf_stats.handler_time_ms,
+                    "serialize_time_ms": perf_stats.serialize_time_ms,
+                    "slow_queries": perf_stats.slow_queries or None,
+                    "slow_queries_dropped": perf_stats.slow_queries_dropped or None,
+                }
+            )
+        logger.info("request.completed", extra=extra)
+        record_request_perf(
+            request_id=getattr(request.state, "request_id", None),
+            path=request.url.path,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+            db_time_ms=db_time_ms,
+            db_queries_count=db_queries_count,
         )
         return response

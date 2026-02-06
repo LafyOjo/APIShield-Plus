@@ -1,0 +1,34 @@
+{
+  "name": "multi_tenant_fairness",
+  "base_url": "http://localhost:8000",
+  "ingest_path": "/api/v1/ingest/browser",
+  "workers": 3,
+  "batch_size": 10,
+  "max_in_flight": 200,
+  "timeout_seconds": 10,
+  "session_pool_size": 30000,
+  "targets": [
+    {
+      "api_key": "pk_replace_me_a",
+      "domain": "tenant-a.com",
+      "weight": 5
+    },
+    {
+      "api_key": "pk_replace_me_b",
+      "domain": "tenant-b.com",
+      "weight": 3
+    },
+    {
+      "api_key": "pk_replace_me_c",
+      "domain": "tenant-c.com",
+      "weight": 1
+    }
+  ],
+  "segments": [
+    { "duration_seconds": 900, "rps": 20000 }
+  ],
+  "security_ingest_path": "/api/v1/ingest/integrity",
+  "metrics_path": "/metrics",
+  "output_json": "reports/multi_tenant_fairness.json",
+  "output_md": "reports/multi_tenant_fairness.md"
+}
