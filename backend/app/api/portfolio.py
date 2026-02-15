@@ -458,6 +458,8 @@ def get_portfolio_summary(
     current_user=Depends(get_current_user),
 ):
     tenant_id_value, role, _partner_mode = _resolve_target_tenant(request, db, current_user, tenant_id)
+    requested_from_ts = from_ts
+    requested_to_ts = to_ts
     entitlements = resolve_effective_entitlements(db, tenant_id_value)
     require_feature(entitlements, "portfolio_view", message="Portfolio scorecards require a Business plan")
     if role is not None:
@@ -472,8 +474,9 @@ def get_portfolio_summary(
         tenant_id=tenant_id_value,
         db_scope=db_scope_id(db),
         filters={
-            "from": effective_from,
-            "to": effective_to,
+            # Keep cache key stable for repeated requests with same user inputs.
+            "from": requested_from_ts,
+            "to": requested_to_ts,
             "status": status,
             "stack_type": stack_type,
             "region": region,

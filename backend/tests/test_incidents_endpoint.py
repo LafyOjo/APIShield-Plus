@@ -150,3 +150,40 @@ def test_incidents_endpoints_tenant_scoped():
         headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_a_slug},
     )
     assert forbidden_resp.status_code == 404
+
+
+def test_incident_status_update_invalidates_tenant_cache(monkeypatch):
+    db_url = f"sqlite:///./incidents_endpoint_cache_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+
+    tenant_slug, tenant_id, website_id, env_id = _seed_tenant(
+        SessionLocal,
+        username="owner-cache",
+        tenant_name="CacheTenant",
+        domain="cache.example.com",
+    )
+    with SessionLocal() as db:
+        incident_id = _seed_incident(
+            db,
+            tenant_id=tenant_id,
+            website_id=website_id,
+            env_id=env_id,
+            title="Cache invalidation incident",
+        )
+
+    invalidated: list[int] = []
+
+    def _capture_invalidation(value: int) -> int:
+        invalidated.append(value)
+        return 1
+
+    monkeypatch.setattr("app.api.incidents.invalidate_tenant_cache", _capture_invalidation)
+
+    token = _login("owner-cache", tenant_slug)
+    resp = client.patch(
+        f"/api/v1/incidents/{incident_id}",
+        json={"status": "mitigated"},
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_slug},
+    )
+    assert resp.status_code == 200
+    assert invalidated == [tenant_id]

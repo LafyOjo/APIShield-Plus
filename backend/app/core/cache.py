@@ -12,13 +12,22 @@ from typing import Any, Protocol
 from fastapi.encoders import jsonable_encoder
 
 from app.core.config import settings
-from app.core.metrics import record_cache_hit, record_cache_miss, record_cache_set
+from app.core.metrics import (
+    record_cache_hit,
+    record_cache_key_count,
+    record_cache_miss,
+    record_cache_set,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
 class CacheBackend(Protocol):
+    @property
+    def backend_name(self) -> str:
+        ...
+
     def get(self, key: str) -> str | None:
         ...
 
@@ -28,7 +37,13 @@ class CacheBackend(Protocol):
     def delete(self, key: str) -> None:
         ...
 
+    def delete_prefix(self, prefix: str) -> int:
+        ...
+
     def clear(self) -> None:
+        ...
+
+    def count_keys(self) -> int:
         ...
 
 
@@ -41,6 +56,10 @@ class _CacheEntry:
 class InMemoryCache:
     def __init__(self) -> None:
         self._store: dict[str, _CacheEntry] = {}
+
+    @property
+    def backend_name(self) -> str:
+        return "memory"
 
     def get(self, key: str) -> str | None:
         entry = self._store.get(key)
@@ -58,11 +77,24 @@ class InMemoryCache:
     def delete(self, key: str) -> None:
         self._store.pop(key, None)
 
+    def delete_prefix(self, prefix: str) -> int:
+        keys = [key for key in self._store if key.startswith(prefix)]
+        for key in keys:
+            self._store.pop(key, None)
+        return len(keys)
+
     def clear(self) -> None:
         self._store.clear()
 
+    def count_keys(self) -> int:
+        return len(self._store)
+
 
 class NullCache:
+    @property
+    def backend_name(self) -> str:
+        return "none"
+
     def get(self, key: str) -> str | None:
         return None
 
@@ -72,8 +104,14 @@ class NullCache:
     def delete(self, key: str) -> None:
         return None
 
+    def delete_prefix(self, prefix: str) -> int:
+        return 0
+
     def clear(self) -> None:
         return None
+
+    def count_keys(self) -> int:
+        return 0
 
 
 class RedisCache:
@@ -83,6 +121,10 @@ class RedisCache:
         except Exception as exc:  # pragma: no cover - optional dependency
             raise RuntimeError("redis package is required for Redis cache backend") from exc
         self._client = redis.Redis.from_url(url, decode_responses=True)
+
+    @property
+    def backend_name(self) -> str:
+        return "redis"
 
     def get(self, key: str) -> str | None:
         return self._client.get(key)
@@ -97,10 +139,20 @@ class RedisCache:
     def delete(self, key: str) -> None:
         self._client.delete(key)
 
+    def delete_prefix(self, prefix: str) -> int:
+        deleted = 0
+        for key in self._client.scan_iter(f"{prefix}*"):
+            self._client.delete(key)
+            deleted += 1
+        return deleted
+
     def clear(self) -> None:
         prefix = f"{settings.CACHE_NAMESPACE}:"
         for key in self._client.scan_iter(f"{prefix}*"):
             self._client.delete(key)
+
+    def count_keys(self) -> int:
+        return sum(1 for _ in self._client.scan_iter(f"{settings.CACHE_NAMESPACE}:*"))
 
 
 _CACHE_BACKEND: CacheBackend | None = None
@@ -175,6 +227,14 @@ class CacheService:
     def _active_backend(self) -> CacheBackend:
         return self._backend or _get_backend()
 
+    def _record_key_count(self) -> None:
+        backend = self._active_backend()
+        try:
+            key_count = backend.count_keys()
+        except Exception:
+            return
+        record_cache_key_count(backend.backend_name, key_count)
+
     def get(self, key: str, *, cache_name: str = "default") -> Any | None:
         payload = self._active_backend().get(key)
         if payload is None:
@@ -201,13 +261,21 @@ class CacheService:
         effective_ttl = self._default_ttl if ttl is None else ttl
         self._active_backend().set(key, payload, ttl=effective_ttl)
         record_cache_set(cache_name, len(payload))
+        self._record_key_count()
         return None
 
     def delete(self, key: str) -> None:
         self._active_backend().delete(key)
+        self._record_key_count()
+
+    def delete_prefix(self, prefix: str) -> int:
+        removed = self._active_backend().delete_prefix(prefix)
+        self._record_key_count()
+        return removed
 
     def clear(self) -> None:
         self._active_backend().clear()
+        self._record_key_count()
 
 
 def get_cache_service() -> CacheService:
@@ -233,6 +301,10 @@ def cache_set(
 
 def cache_delete(key: str) -> None:
     get_cache_service().delete(key)
+
+
+def cache_delete_prefix(prefix: str) -> int:
+    return get_cache_service().delete_prefix(prefix)
 
 
 def cache_clear() -> None:
@@ -331,3 +403,17 @@ def db_scope_id(db) -> str | None:
     except Exception:
         return None
     return sha1(url.encode("utf-8")).hexdigest()[:12]
+
+
+def tenant_cache_prefix(tenant_id: int) -> str:
+    return f"{settings.CACHE_NAMESPACE}:tenant:{tenant_id}:"
+
+
+def invalidate_tenant_cache(tenant_id: int) -> int:
+    """
+    Invalidate all tenant-scoped cache entries.
+
+    This is used on writes where stale reads are risky (incident status changes,
+    notification rule edits, website setting changes).
+    """
+    return cache_delete_prefix(tenant_cache_prefix(tenant_id))

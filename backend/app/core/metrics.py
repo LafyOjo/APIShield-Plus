@@ -105,11 +105,21 @@ CACHE_SET_TOTAL = Counter(
     "Cache sets by cache name",
     ["cache"],
 )
+CACHE_KEYS_SET_TOTAL = Counter(
+    "cache_keys_set_total",
+    "Number of cache keys set operations",
+    ["cache"],
+)
 CACHE_PAYLOAD_BYTES = Histogram(
     "cache_payload_bytes",
     "Cached payload size in bytes",
     ["cache"],
     buckets=[100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000],
+)
+CACHE_KEY_COUNT = Gauge(
+    "cache_key_count",
+    "Approximate cache key count by backend",
+    ["backend"],
 )
 
 JOB_RUN_TOTAL = Counter(
@@ -293,9 +303,15 @@ def record_cache_miss(cache_name: str) -> None:
 
 
 def record_cache_set(cache_name: str, payload_bytes: int | None = None) -> None:
-    CACHE_SET_TOTAL.labels(cache=_label(cache_name, "default")).inc()
+    normalized = _label(cache_name, "default")
+    CACHE_SET_TOTAL.labels(cache=normalized).inc()
+    CACHE_KEYS_SET_TOTAL.labels(cache=normalized).inc()
     if payload_bytes is not None:
-        CACHE_PAYLOAD_BYTES.labels(cache=_label(cache_name, "default")).observe(payload_bytes)
+        CACHE_PAYLOAD_BYTES.labels(cache=normalized).observe(payload_bytes)
+
+
+def record_cache_key_count(backend: str, key_count: int) -> None:
+    CACHE_KEY_COUNT.labels(backend=_label(backend, "unknown")).set(max(0, int(key_count)))
 
 
 def record_job_run(*, job_name: str, success: bool) -> None:

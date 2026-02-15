@@ -47,3 +47,10 @@ python scripts/perf/bench.py --base-url http://localhost:8000 --report-dir ./per
 
 Use `--smoke` for a fast health-only sweep (CI-friendly) and `--only` to target
 specific endpoints.
+
+## Related docs
+
+- Caching policy: `docs/performance/caching.md`
+- Ingestion efficiency: `docs/performance/ingestion_efficiency.md`
+- Queue scaling runbook: `docs/performance/queue_scaling.md`
+- Load and soak tests: `docs/performance/load_tests.md`

@@ -18,3 +18,14 @@ class JobDeadLetterRead(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+class JobQueueStatsRead(BaseModel):
+    queue_name: str
+    queued: int
+    running: int
+    succeeded_last_hour: int
+    failed_last_hour: int
+    retrying: int
+    avg_queue_age_seconds: float
+    dead_letters_total: int

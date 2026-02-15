@@ -85,7 +85,7 @@ def list_trust_snapshots(
     if to_ts:
         query = query.filter(TrustSnapshot.bucket_start <= to_ts)
     rows = query.order_by(TrustSnapshot.bucket_start.asc()).limit(limit).all()
-    payload = [TrustSnapshotRead.from_orm(row) for row in rows]
+    payload = [TrustSnapshotRead.model_validate(row, from_attributes=True) for row in rows]
     cache_set(
         cache_key,
         payload,

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
+from app.core.cache import invalidate_tenant_cache
 from app.core.crypto import decrypt_json
 from app.core.db import get_db
 from app.core.entitlements import resolve_effective_entitlements
@@ -335,6 +336,7 @@ def create_notification_rule(
         event=f"notification_rule_created:{rule.id}",
         request=request,
     )
+    invalidate_tenant_cache(tenant_id)
     return _rule_read(db, rule)
 
 
@@ -376,6 +378,7 @@ def update_notification_rule(
         event=f"notification_rule_updated:{rule_id}",
         request=request,
     )
+    invalidate_tenant_cache(tenant_id)
     return _rule_read(db, rule)
 
 
@@ -402,6 +405,7 @@ def delete_notification_rule(
         event=f"notification_rule_deleted:{rule_id}",
         request=request,
     )
+    invalidate_tenant_cache(tenant_id)
     return _rule_read(db, rule)
 
 

@@ -27,6 +27,7 @@ import RemediationWorkspacePage from "./RemediationWorkspacePage";
 import RevenueLeakHeatmapPage from "./RevenueLeakHeatmapPage";
 import WebsiteSettingsPage from "./WebsiteSettingsPage";
 import OnboardingWizardPage from "./OnboardingWizardPage";
+import DemoLabPage from "./DemoLabPage";
 import NotificationsSettingsPage from "./NotificationsSettingsPage";
 import BrandingSettingsPage from "./BrandingSettingsPage";
 import BillingPage from "./BillingPage";
@@ -334,6 +335,9 @@ function App() {
   const isOnboardingRoute =
     currentRoute.startsWith("/dashboard/onboarding") ||
     currentRoute.startsWith("/onboarding");
+  const isDemoRoute =
+    currentRoute.startsWith("/dashboard/demo") ||
+    currentRoute.startsWith("/demo");
   const isPartnerRoute = currentRoute.startsWith("/partner");
   const isAdminRoute =
     currentRoute.startsWith("/admin");
@@ -470,7 +474,7 @@ function App() {
               !isMapRoute && !isEventsRoute && !isRevenueRoute && !isNotificationsRoute
                 && !isBillingRoute && !isComplianceRoute && !isAdminRoute && !isWebsiteSettingsRoute
                 && !isOnboardingRoute && !isHelpRoute && !isMarketplaceRoute && !isBrandingRoute
-                && !isPortfolioRoute
+                && !isPortfolioRoute && !isDemoRoute
                 ? "active"
                 : ""
             }`}
@@ -515,6 +519,12 @@ function App() {
             Onboarding
           </button>
           <button
+            className={`btn secondary nav-tab ${isDemoRoute ? "active" : ""}`}
+            onClick={() => navigate("/dashboard/demo")}
+          >
+            Demo Lab
+          </button>
+          <button
             className={`btn secondary nav-tab ${isHelpRoute ? "active" : ""}`}
             onClick={() => navigate("/dashboard/help")}
           >
@@ -537,6 +547,12 @@ function App() {
             onClick={() => navigate("/dashboard/compliance/audit")}
           >
             Compliance
+          </button>
+          <button
+            className={`btn secondary nav-tab ${isBillingRoute ? "active" : ""}`}
+            onClick={() => navigate("/billing")}
+          >
+            Billing
           </button>
           <button
             className={`btn secondary nav-tab ${isAdminRoute && !isAdminStatusRoute ? "active" : ""}`}
@@ -617,6 +633,8 @@ function App() {
         <MarketplaceTemplateDetailPage templateId={marketplaceId} />
       ) : isMarketplaceRoute ? (
         <MarketplacePage />
+      ) : isDemoRoute ? (
+        <DemoLabPage onNavigate={navigate} />
       ) : isOnboardingRoute ? (
         <OnboardingWizardPage />
       ) : isHelpRoute ? (

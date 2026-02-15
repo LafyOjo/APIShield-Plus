@@ -1,5 +1,5 @@
 import os
-from datetime import timedelta, timezone
+from datetime import timedelta
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -57,6 +57,20 @@ def test_dead_letter_list_requires_platform_admin():
     assert resp.status_code == 403
 
 
+def test_queue_stats_require_platform_admin():
+    db_url = f"sqlite:///./queue_admin_stats_block_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+    with SessionLocal() as db:
+        create_user(db, username="user-stats", password_hash=get_password_hash("pw"), role="user")
+
+    token = _login("user-stats")
+    resp = client.get(
+        "/api/v1/admin/queue/stats",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+
+
 def test_admin_can_view_dead_letters():
     db_url = f"sqlite:///./queue_admin_{uuid4().hex}.db"
     SessionLocal = _setup_db(db_url)
@@ -101,3 +115,47 @@ def test_admin_can_view_dead_letters():
     payload = resp.json()
     assert payload
     assert payload[0]["job_type"] == "explode"
+
+
+def test_admin_can_view_queue_stats():
+    db_url = f"sqlite:///./queue_admin_stats_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+    clear_job_handlers()
+
+    def _ok(_db, _payload):
+        return None
+
+    register_job_handler("work", _ok)
+
+    with SessionLocal() as db:
+        create_user(
+            db,
+            username="admin-stats",
+            password_hash=get_password_hash("pw"),
+            role="user",
+            is_platform_admin=True,
+        )
+        enqueue_job(
+            db,
+            job_type="work",
+            queue_name="critical",
+            payload={"value": 1},
+        )
+
+    with SessionLocal() as db:
+        run_queue_once(db, queue_name="critical", worker_id="worker-stats", limit=5)
+
+    token = _login("admin-stats")
+    resp = client.get(
+        "/api/v1/admin/queue/stats",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload
+    queue_names = {row["queue_name"] for row in payload}
+    assert {"critical", "standard", "bulk"}.issubset(queue_names)
+    critical = next(row for row in payload if row["queue_name"] == "critical")
+    assert critical["succeeded_last_hour"] >= 1
+    assert critical["queued"] >= 0
+    assert critical["running"] >= 0

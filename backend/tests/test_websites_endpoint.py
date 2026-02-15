@@ -281,3 +281,39 @@ def test_list_websites_excludes_deleted_by_default():
     payload = resp.json()
     domains = {item["domain"] for item in payload}
     assert domains == {active.domain}
+
+
+def test_website_stack_update_invalidates_tenant_cache(monkeypatch):
+    db_url = f"sqlite:///./websites_stack_cache_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+    with SessionLocal() as db:
+        owner = create_user(db, username="owner-stack", password_hash=get_password_hash("pw"), role="user")
+        tenant = create_tenant(db, name="StackCacheTenant")
+        create_membership(
+            db,
+            tenant_id=tenant.id,
+            user_id=owner.id,
+            role="owner",
+            created_by_user_id=owner.id,
+        )
+        website = create_website(db, tenant.id, "stack.example.com", created_by_user_id=owner.id)
+        tenant_slug = tenant.slug
+        tenant_id = tenant.id
+        website_id = website.id
+
+    invalidated: list[int] = []
+
+    def _capture_invalidation(value: int) -> int:
+        invalidated.append(value)
+        return 1
+
+    monkeypatch.setattr("app.api.websites.invalidate_tenant_cache", _capture_invalidation)
+
+    token = _login("owner-stack")
+    resp = client.patch(
+        f"/api/v1/websites/{website_id}/stack",
+        json={"stack_type": "wordpress"},
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_slug},
+    )
+    assert resp.status_code == 200
+    assert invalidated == [tenant_id]

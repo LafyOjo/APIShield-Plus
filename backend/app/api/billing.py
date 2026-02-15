@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
-from app.billing.catalog import get_plan_name, get_price_id, normalize_plan_key, plan_key_from_price_id
+from app.billing.catalog import (
+    get_plan_catalog,
+    get_plan_name,
+    get_price_id,
+    normalize_plan_key,
+    plan_key_from_price_id,
+)
 from app.core.config import settings
 from app.core.referrals import process_referral_conversion
 from app.core.affiliates import process_affiliate_conversion, void_affiliate_commission
@@ -18,8 +24,15 @@ from app.crud.subscriptions import (
 )
 from app.crud.audit import create_audit_log
 from app.crud.tenants import get_tenant_by_id, get_tenant_by_slug
+from app.entitlements.resolver import resolve_entitlements_for_tenant
 from app.models.enums import RoleEnum
-from app.schemas.billing import CheckoutSessionCreate, CheckoutSessionResponse, PortalSessionResponse
+from app.schemas.billing import (
+    BillingPlanOption,
+    BillingStatusResponse,
+    CheckoutSessionCreate,
+    CheckoutSessionResponse,
+    PortalSessionResponse,
+)
 from app.tenancy.dependencies import require_role_in_tenant
 
 import stripe
@@ -106,6 +119,18 @@ def _extract_price_id(subscription_obj: dict) -> str | None:
     return price.get("id") if isinstance(price, dict) else None
 
 
+def _role_value(role: RoleEnum | str | None) -> str:
+    if isinstance(role, RoleEnum):
+        return role.value
+    if isinstance(role, str):
+        return role
+    return ""
+
+
+def _can_manage_billing(role: RoleEnum | str | None) -> bool:
+    return _role_value(role).lower() in {"owner", "admin", "billing_admin"}
+
+
 def _resolve_tenant_id_from_payload(
     db: Session,
     *,
@@ -126,6 +151,64 @@ def _resolve_tenant_id_from_payload(
         stripe_customer_id=stripe_customer_id,
     )
     return existing.tenant_id if existing else None
+
+
+@router.get("/status", response_model=BillingStatusResponse)
+def get_billing_status(
+    db: Session = Depends(get_db),
+    ctx=Depends(
+        require_role_in_tenant(
+            [RoleEnum.VIEWER],
+            user_resolver=get_current_user,
+        )
+    ),
+):
+    tenant_id = _resolve_tenant_id(db, ctx.tenant_id)
+    subscription = get_latest_subscription_for_tenant(db, tenant_id)
+    entitlements = resolve_entitlements_for_tenant(db, tenant_id)
+    plan_key = (
+        (subscription.plan_key if subscription else None)
+        or entitlements.get("plan_key")
+    )
+    plan_name = (
+        (subscription.plan.name if subscription and subscription.plan else None)
+        or entitlements.get("plan_name")
+        or (get_plan_name(plan_key) if plan_key else None)
+    )
+    catalog = get_plan_catalog()
+    stripe_configured = bool(settings.STRIPE_SECRET_KEY)
+    available_plans: list[BillingPlanOption] = []
+    for key in ("free", "pro", "business", "enterprise"):
+        entry = catalog.get(key, {})
+        name = str(entry.get("plan_name") or key.title())
+        price_id = entry.get("price_id")
+        contact_sales = key == "enterprise"
+        checkout_available = bool(
+            not contact_sales and key != "free" and stripe_configured and price_id
+        )
+        available_plans.append(
+            BillingPlanOption(
+                plan_key=key,
+                plan_name=name,
+                checkout_available=checkout_available,
+                contact_sales=contact_sales,
+            )
+        )
+
+    return BillingStatusResponse(
+        tenant_id=tenant_id,
+        plan_key=plan_key,
+        plan_name=plan_name,
+        subscription_status=subscription.status if subscription else None,
+        provider=subscription.provider if subscription else None,
+        current_period_start=subscription.current_period_start if subscription else None,
+        current_period_end=subscription.current_period_end if subscription else None,
+        cancel_at_period_end=bool(subscription.cancel_at_period_end) if subscription else False,
+        can_manage_billing=_can_manage_billing(getattr(ctx, "role", None)),
+        stripe_configured=stripe_configured,
+        webhook_configured=bool(settings.STRIPE_WEBHOOK_SECRET),
+        available_plans=available_plans,
+    )
 
 
 @router.post("/checkout", response_model=CheckoutSessionResponse)
@@ -339,7 +422,7 @@ async def stripe_webhook(
                             db,
                             tenant_id=tenant_id,
                             stripe_subscription_id=stripe_subscription_id,
-                            reason=f\"subscription_{status_value}\",
+                            reason=f"subscription_{status_value}",
                         )
                     except Exception:
                         pass

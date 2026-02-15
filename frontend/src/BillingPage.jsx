@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiFetch, ACTIVE_TENANT_KEY } from "./api";
+import { ACTIVE_TENANT_KEY, apiFetch } from "./api";
 import { getRoleTemplate } from "./roles";
 
 const PLAN_OPTIONS = [
@@ -41,6 +41,19 @@ const PLAN_OPTIONS = [
   },
 ];
 
+function navigateTo(path) {
+  if (!path) return;
+  window.history.pushState({}, "", path);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+function formatDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString();
+}
+
 export default function BillingPage() {
   const [tenants, setTenants] = useState([]);
   const [activeTenant, setActiveTenant] = useState(
@@ -49,15 +62,31 @@ export default function BillingPage() {
   const [activeRole, setActiveRole] = useState(null);
   const [loadingPlan, setLoadingPlan] = useState("");
   const [loadingPortal, setLoadingPortal] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState(false);
   const [error, setError] = useState("");
-  const [status, setStatus] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [billingStatus, setBillingStatus] = useState(null);
+
   const roleTemplate = useMemo(() => getRoleTemplate(activeRole), [activeRole]);
 
-  const canManage = useMemo(
-    () =>
-      ["owner", "admin", "billing_admin"].includes(String(activeRole || "").toLowerCase()),
+  const fallbackCanManage = useMemo(
+    () => ["owner", "admin", "billing_admin"].includes(String(activeRole || "").toLowerCase()),
     [activeRole]
   );
+  const canManage = billingStatus ? Boolean(billingStatus.can_manage_billing) : fallbackCanManage;
+
+  const currentPlanKey = useMemo(() => {
+    if (!billingStatus?.plan_key) return "";
+    return String(billingStatus.plan_key).toLowerCase();
+  }, [billingStatus]);
+
+  const availabilityByPlan = useMemo(() => {
+    const map = new Map();
+    for (const option of billingStatus?.available_plans || []) {
+      map.set(String(option.plan_key || "").toLowerCase(), option);
+    }
+    return map;
+  }, [billingStatus]);
 
   const loadTenants = useCallback(async () => {
     try {
@@ -91,6 +120,28 @@ export default function BillingPage() {
     }
   }, [activeTenant]);
 
+  const loadBillingStatus = useCallback(async () => {
+    if (!activeTenant) {
+      setBillingStatus(null);
+      return;
+    }
+    setLoadingStatus(true);
+    try {
+      const resp = await apiFetch("/api/v1/billing/status", { skipReauth: true });
+      if (!resp.ok) {
+        const payload = await resp.json().catch(() => ({}));
+        throw new Error(payload?.detail || "Unable to load billing status");
+      }
+      const data = await resp.json();
+      setBillingStatus(data);
+    } catch (err) {
+      setBillingStatus(null);
+      setError(err.message || "Unable to load billing status");
+    } finally {
+      setLoadingStatus(false);
+    }
+  }, [activeTenant]);
+
   useEffect(() => {
     loadTenants();
   }, [loadTenants]);
@@ -98,20 +149,49 @@ export default function BillingPage() {
   useEffect(() => {
     if (!activeTenant) {
       localStorage.removeItem(ACTIVE_TENANT_KEY);
+      setBillingStatus(null);
       return;
     }
     localStorage.setItem(ACTIVE_TENANT_KEY, activeTenant);
     loadActiveRole();
-  }, [activeTenant, loadActiveRole]);
+    loadBillingStatus();
+  }, [activeTenant, loadActiveRole, loadBillingStatus]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const checkout = (params.get("checkout") || "").toLowerCase();
+    if (!checkout) return;
+
+    if (checkout === "success") {
+      setStatusMessage("Checkout completed. Subscription status refreshed.");
+      if (activeTenant) {
+        void loadBillingStatus();
+      }
+    } else if (checkout === "cancel") {
+      setStatusMessage("Checkout canceled. No changes were made to your plan.");
+    }
+
+    params.delete("checkout");
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`;
+    window.history.replaceState({}, "", nextUrl);
+  }, [activeTenant, loadBillingStatus]);
 
   const handleCheckout = async (planKey) => {
     if (!canManage) {
       setError("Owner, admin, or billing admin role required to upgrade.");
       return;
     }
+
+    const availability = availabilityByPlan.get(String(planKey).toLowerCase());
+    if (availability && !availability.checkout_available && !availability.contact_sales) {
+      setError("Checkout is not configured for this plan yet.");
+      return;
+    }
+
     setLoadingPlan(planKey);
     setError("");
-    setStatus("");
+    setStatusMessage("");
     try {
       const resp = await apiFetch("/api/v1/billing/checkout", {
         method: "POST",
@@ -141,7 +221,7 @@ export default function BillingPage() {
     }
     setLoadingPortal(true);
     setError("");
-    setStatus("");
+    setStatusMessage("");
     try {
       const resp = await apiFetch("/api/v1/billing/portal", { method: "POST" });
       if (!resp.ok) {
@@ -173,6 +253,17 @@ export default function BillingPage() {
               Role: {roleTemplate?.label || activeRole}
             </div>
           )}
+          {billingStatus && (
+            <p className="subtle small" data-testid="billing-current-plan">
+              Current plan: {billingStatus.plan_name || "Free"}
+              {billingStatus.subscription_status
+                ? ` | Status: ${billingStatus.subscription_status}`
+                : ""}
+              {billingStatus.current_period_end
+                ? ` | Renews: ${formatDate(billingStatus.current_period_end)}`
+                : ""}
+            </p>
+          )}
         </div>
         <div className="billing-tenant">
           <label className="label">Active tenant</label>
@@ -200,6 +291,19 @@ export default function BillingPage() {
           >
             {loadingPortal ? "Opening portal..." : "Manage subscription"}
           </button>
+          <button
+            className="btn secondary"
+            onClick={() => navigateTo("/dashboard/onboarding")}
+          >
+            Connect website
+          </button>
+          <button
+            className="btn secondary"
+            onClick={() => loadBillingStatus()}
+            disabled={loadingStatus}
+          >
+            {loadingStatus ? "Refreshing..." : "Refresh status"}
+          </button>
           {!canManage && (
             <span className="help">
               Owner, admin, or billing admin role required for billing actions.
@@ -207,43 +311,67 @@ export default function BillingPage() {
           )}
         </div>
         {error && <p className="error-text">{error}</p>}
-        {status && <p className="help">{status}</p>}
+        {statusMessage && <p className="help">{statusMessage}</p>}
+        {billingStatus && !billingStatus.stripe_configured && (
+          <p className="help">Stripe checkout is not configured yet. Contact support to enable paid plans.</p>
+        )}
       </section>
 
       <section className="billing-grid">
-        {PLAN_OPTIONS.map((plan) => (
-          <div key={plan.key} className="card billing-plan">
-            <div className="billing-plan-header">
-              <div>
-                <h3 className="section-title">{plan.name}</h3>
-                <div className="billing-price">{plan.price}</div>
+        {PLAN_OPTIONS.map((plan) => {
+          const availability = availabilityByPlan.get(plan.key) || null;
+          const isCurrent = currentPlanKey === plan.key;
+          const isEnterprise = plan.key === "enterprise";
+          const checkoutAvailable = availability
+            ? availability.checkout_available
+            : !isEnterprise;
+          const contactSales = availability
+            ? availability.contact_sales
+            : isEnterprise;
+          const disabled =
+            !canManage ||
+            loadingPlan === plan.key ||
+            isCurrent ||
+            (!checkoutAvailable && !contactSales);
+
+          return (
+            <div key={plan.key} className="card billing-plan">
+              <div className="billing-plan-header">
+                <div>
+                  <h3 className="section-title">{plan.name}</h3>
+                  <div className="billing-price">{plan.price}</div>
+                </div>
+                <button
+                  className="btn primary"
+                  onClick={() => {
+                    if (contactSales) {
+                      window.location.href = "mailto:enterprise@apishield.plus";
+                    } else {
+                      void handleCheckout(plan.key);
+                    }
+                  }}
+                  disabled={disabled}
+                >
+                  {isCurrent
+                    ? "Current plan"
+                    : contactSales
+                    ? "Contact sales"
+                    : loadingPlan === plan.key
+                    ? "Starting checkout..."
+                    : checkoutAvailable
+                    ? "Upgrade"
+                    : "Unavailable"}
+                </button>
               </div>
-            <button
-              className="btn primary"
-              onClick={() => {
-                if (plan.key === "enterprise") {
-                  window.location.href = "mailto:enterprise@apishield.plus";
-                } else {
-                  handleCheckout(plan.key);
-                }
-              }}
-              disabled={loadingPlan === plan.key || !canManage}
-            >
-              {plan.key === "enterprise"
-                ? "Contact sales"
-                : loadingPlan === plan.key
-                  ? "Starting checkout..."
-                  : "Upgrade"}
-            </button>
+              <p className="subtle">{plan.highlight}</p>
+              <ul className="billing-features">
+                {plan.features.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
             </div>
-            <p className="subtle">{plan.highlight}</p>
-            <ul className="billing-features">
-              {plan.features.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </div>
-        ))}
+          );
+        })}
       </section>
     </div>
   );

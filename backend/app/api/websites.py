@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.dependencies import get_current_user
+from app.core.cache import invalidate_tenant_cache
 from app.core.db import get_db
 from app.core.snippets import build_embed_snippet
 from app.core.verification import build_verification_instructions
@@ -301,6 +302,7 @@ def update_stack_profile_endpoint(
             event=f"website_stack_override:{website.domain}:{stack_type}",
             request=request,
         )
+        invalidate_tenant_cache(membership.tenant_id)
         return profile
 
     if changes.get("manual_override") is False:
@@ -316,6 +318,7 @@ def update_stack_profile_endpoint(
             event=f"website_stack_override_cleared:{website.domain}",
             request=request,
         )
+        invalidate_tenant_cache(membership.tenant_id)
         return profile
 
     profile = get_or_create_stack_profile(

@@ -95,3 +95,37 @@ def test_public_score_endpoint_returns_signed_proof():
     tampered = dict(payload)
     tampered["trust_score_current"] = 12
     assert verify_signature(tampered, signature, public_key) is False
+
+
+def test_public_trust_page_serves_with_cache_headers():
+    db_url = f"sqlite:///./public_score_page_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+    with SessionLocal() as db:
+        tenant = create_tenant(db, name="Trust Page Tenant")
+        website = Website(tenant_id=tenant.id, domain="trust.example.com")
+        db.add(website)
+        db.commit()
+        db.refresh(website)
+        env = WebsiteEnvironment(website_id=website.id, name="production")
+        db.add(env)
+        db.commit()
+        db.refresh(env)
+        snapshot = TrustSnapshot(
+            tenant_id=tenant.id,
+            website_id=website.id,
+            environment_id=env.id,
+            bucket_start=datetime.utcnow() - timedelta(minutes=1),
+            path=None,
+            trust_score=84,
+            confidence=0.7,
+            factor_count=1,
+        )
+        db.add(snapshot)
+        db.commit()
+        website_id = website.id
+
+    resp = client.get(f"/public/trust?website_id={website_id}")
+    assert resp.status_code == 200
+    assert "max-age" in (resp.headers.get("cache-control") or "").lower()
+    assert resp.headers.get("etag")
+    assert "trust.example.com" in resp.text

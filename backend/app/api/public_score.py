@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import func
 
 from app.core.config import settings
@@ -22,6 +22,11 @@ router = APIRouter(tags=["public-score"])
 
 
 def _cache_headers(response: JSONResponse) -> None:
+    response.headers["Cache-Control"] = f"public, max-age={settings.TRUST_SCORE_CACHE_SECONDS}"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+
+
+def _cache_headers_html(response: HTMLResponse) -> None:
     response.headers["Cache-Control"] = f"public, max-age={settings.TRUST_SCORE_CACHE_SECONDS}"
     response.headers["Access-Control-Allow-Origin"] = "*"
 
@@ -169,4 +174,77 @@ def get_public_score(
     response.headers["X-Proof-Key-Id"] = settings.TRUST_SCORE_SIGNING_KEY_ID or ""
     _cache_headers(response)
     response.headers["ETag"] = _etag_for_payload(payload_json)
+    return response
+
+
+@router.get("/public/trust", include_in_schema=False)
+def get_public_trust_page(
+    website_id: int,
+    request: Request,
+    db=Depends(get_db),
+):
+    subject = _client_subject(request)
+    banned, retry_after = is_banned(subject)
+    if banned:
+        response = HTMLResponse(
+            "<html><body><h1>Too many requests</h1></body></html>",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+        response.headers["Retry-After"] = str(retry_after)
+        _cache_headers_html(response)
+        return response
+
+    rpm = settings.TRUST_SCORE_RPM
+    burst = settings.TRUST_SCORE_BURST
+    allowed, wait_seconds = allow(
+        f"public_trust:{subject}",
+        capacity=burst,
+        refill_rate_per_sec=max(1, rpm) / 60,
+    )
+    if not allowed:
+        register_abuse_attempt(
+            subject,
+            threshold=settings.TRUST_SCORE_ABUSE_THRESHOLD,
+            ban_seconds=settings.TRUST_SCORE_BAN_SECONDS,
+        )
+        response = HTMLResponse(
+            "<html><body><h1>Rate limit exceeded</h1></body></html>",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+        response.headers["Retry-After"] = str(wait_seconds)
+        _cache_headers_html(response)
+        return response
+
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website or website.deleted_at is not None or website.status == WebsiteStatusEnum.DELETED:
+        register_invalid_attempt(
+            subject,
+            threshold=settings.TRUST_SCORE_ABUSE_THRESHOLD,
+            ban_seconds=settings.TRUST_SCORE_BAN_SECONDS,
+        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Website not found")
+
+    snapshot = _latest_snapshot(db, website_id)
+    score = snapshot.trust_score if snapshot else None
+    confidence = snapshot.confidence if snapshot else None
+    updated = snapshot.bucket_start.isoformat() if snapshot and snapshot.bucket_start else "N/A"
+    verified = _compute_verified(score, confidence)
+    score_display = str(score) if score is not None else "Collecting"
+    verified_display = "Verified" if verified else "Monitoring"
+
+    html = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Trust Status</title></head><body>"
+        "<main style='font-family:system-ui;padding:24px;max-width:640px;margin:0 auto;'>"
+        "<h1>Public Trust Status</h1>"
+        f"<p><strong>Website:</strong> {website.domain}</p>"
+        f"<p><strong>TrustScore:</strong> {score_display}</p>"
+        f"<p><strong>Status:</strong> {verified_display}</p>"
+        f"<p><strong>Last updated:</strong> {updated}</p>"
+        "</main></body></html>"
+    )
+    response = HTMLResponse(content=html)
+    _cache_headers_html(response)
+    response.headers["ETag"] = _etag_for_payload(html)
     return response

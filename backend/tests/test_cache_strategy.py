@@ -26,12 +26,17 @@ from app.core.cache import (
 )
 from app.core.security import get_password_hash
 from app.crud.memberships import create_membership
+from app.crud.subscriptions import set_tenant_plan
 from app.crud.tenants import create_tenant
 from app.crud.users import create_user
 from app.crud.websites import create_website
 from app.crud.website_environments import list_environments
 from app.models.enums import RoleEnum
+from app.models.geo_event_aggs import GeoEventAgg
+from app.models.plans import Plan
+from app.models.revenue_leaks import RevenueLeakEstimate
 from app.models.trust_scoring import TrustSnapshot
+from app.models.websites import Website
 
 
 client = TestClient(app)
@@ -100,6 +105,100 @@ def _seed_tenant(SessionLocal, *, username: str, tenant_name: str, trust_score: 
         db.add(snapshot)
         db.commit()
         return tenant.slug, tenant.id
+
+
+def _seed_cached_endpoint_data(
+    SessionLocal,
+    *,
+    username: str,
+    tenant_name: str,
+    domain: str,
+):
+    now = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
+    with SessionLocal() as db:
+        user = create_user(
+            db,
+            username=username,
+            password_hash=get_password_hash("pw"),
+            role="user",
+        )
+        tenant = create_tenant(db, name=tenant_name)
+        create_membership(
+            db,
+            tenant_id=tenant.id,
+            user_id=user.id,
+            role=RoleEnum.OWNER,
+            created_by_user_id=user.id,
+        )
+        website = create_website(db, tenant.id, domain, created_by_user_id=user.id)
+        environment = list_environments(db, website.id)[0]
+        plan = Plan(
+            name=f"{tenant.slug}-plan",
+            price_monthly=99,
+            limits_json={"retention_days": 30, "geo_history_days": 7},
+            features_json={
+                "geo_map": True,
+                "revenue_leaks": True,
+                "portfolio_view": True,
+            },
+            is_active=True,
+        )
+        db.add(plan)
+        db.commit()
+        db.refresh(plan)
+        set_tenant_plan(db, tenant.id, plan.id)
+        db.add(
+            GeoEventAgg(
+                tenant_id=tenant.id,
+                website_id=website.id,
+                environment_id=environment.id,
+                bucket_start=now,
+                event_category="login",
+                severity="medium",
+                country_code="US",
+                region="CO",
+                city="Boulder",
+                latitude=40.0,
+                longitude=-105.0,
+                count=5,
+            )
+        )
+        db.add(
+            TrustSnapshot(
+                tenant_id=tenant.id,
+                website_id=website.id,
+                environment_id=environment.id,
+                bucket_start=now,
+                path=None,
+                trust_score=72,
+                confidence=0.9,
+                factor_count=2,
+                is_demo=False,
+            )
+        )
+        db.add(
+            RevenueLeakEstimate(
+                tenant_id=tenant.id,
+                website_id=website.id,
+                environment_id=environment.id,
+                bucket_start=now,
+                path="/checkout",
+                baseline_conversion_rate=0.3,
+                observed_conversion_rate=0.1,
+                sessions_in_bucket=20,
+                expected_conversions=6.0,
+                observed_conversions=2,
+                lost_conversions=4.0,
+                revenue_per_conversion=120.0,
+                estimated_lost_revenue=480.0,
+                linked_trust_score=72,
+                confidence=0.8,
+                explanation_json={"source": "test"},
+                is_demo=False,
+            )
+        )
+        db.commit()
+        return tenant.slug, tenant.id, website.id, environment.id, now
 
 
 def _login(username: str, tenant_slug: str) -> str:
@@ -330,3 +429,123 @@ def test_cache_never_serves_cross_tenant_data():
     assert data_a
     assert data_b
     assert data_a[0]["trust_score"] != data_b[0]["trust_score"]
+
+
+def test_map_summary_cached_endpoint_returns_same_payload_after_data_change():
+    reset_cache_backend()
+    cache_clear()
+    db_url = os.environ["DATABASE_URL"]
+    SessionLocal = _setup_db(db_url)
+    tenant_slug, tenant_id, _website_id, _env_id, now = _seed_cached_endpoint_data(
+        SessionLocal,
+        username="map_cache_user",
+        tenant_name="Map Cache Tenant",
+        domain="map-cache.example.com",
+    )
+    token = _login("map_cache_user", tenant_slug)
+    params = {
+        "from": (now - timedelta(hours=1)).isoformat(),
+        "to": (now + timedelta(hours=1)).isoformat(),
+    }
+
+    first = client.get(
+        "/api/v1/map/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_slug},
+        params=params,
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["items"]
+
+    with SessionLocal() as db:
+        db.query(GeoEventAgg).filter(GeoEventAgg.tenant_id == tenant_id).delete()
+        db.commit()
+
+    second = client.get(
+        "/api/v1/map/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_slug},
+        params=params,
+    )
+    assert second.status_code == 200
+    assert second.json() == first_payload
+
+
+def test_revenue_leaks_cached_endpoint_returns_same_payload_after_data_change():
+    reset_cache_backend()
+    cache_clear()
+    db_url = os.environ["DATABASE_URL"]
+    SessionLocal = _setup_db(db_url)
+    tenant_slug, tenant_id, _website_id, _env_id, now = _seed_cached_endpoint_data(
+        SessionLocal,
+        username="leaks_cache_user",
+        tenant_name="Leaks Cache Tenant",
+        domain="leaks-cache.example.com",
+    )
+    token = _login("leaks_cache_user", tenant_slug)
+    params = {
+        "from": (now - timedelta(hours=1)).isoformat(),
+        "to": (now + timedelta(hours=1)).isoformat(),
+    }
+
+    first = client.get(
+        "/api/v1/revenue/leaks",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_slug},
+        params=params,
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["items"]
+
+    with SessionLocal() as db:
+        db.query(RevenueLeakEstimate).filter(RevenueLeakEstimate.tenant_id == tenant_id).delete()
+        db.commit()
+
+    second = client.get(
+        "/api/v1/revenue/leaks",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_slug},
+        params=params,
+    )
+    assert second.status_code == 200
+    assert second.json() == first_payload
+
+
+def test_portfolio_summary_cached_endpoint_returns_same_payload_after_data_change():
+    reset_cache_backend()
+    cache_clear()
+    db_url = os.environ["DATABASE_URL"]
+    SessionLocal = _setup_db(db_url)
+    tenant_slug, tenant_id, website_id, _env_id, now = _seed_cached_endpoint_data(
+        SessionLocal,
+        username="portfolio_cache_user",
+        tenant_name="Portfolio Cache Tenant",
+        domain="portfolio-cache.example.com",
+    )
+    token = _login("portfolio_cache_user", tenant_slug)
+    params = {
+        "from": (now - timedelta(hours=1)).isoformat(),
+        "to": (now + timedelta(hours=1)).isoformat(),
+    }
+
+    first = client.get(
+        "/api/v1/portfolio/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_slug},
+        params=params,
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["summary"]["website_count"] >= 1
+
+    with SessionLocal() as db:
+        website = db.query(Website).filter(Website.id == website_id, Website.tenant_id == tenant_id).first()
+        assert website is not None
+        website.status = "deleted"
+        website.deleted_at = datetime.utcnow()
+        db.commit()
+
+    second = client.get(
+        "/api/v1/portfolio/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_slug},
+        params=params,
+    )
+    assert second.status_code == 200
+    assert second.json() == first_payload

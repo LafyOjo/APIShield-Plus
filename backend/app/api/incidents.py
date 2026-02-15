@@ -5,7 +5,14 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
-from app.core.cache import build_cache_key, cache_delete, cache_get, cache_set, db_scope_id
+from app.core.cache import (
+    build_cache_key,
+    cache_delete,
+    cache_get,
+    cache_set,
+    db_scope_id,
+    invalidate_tenant_cache,
+)
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.entitlements import resolve_effective_entitlements
@@ -598,6 +605,8 @@ def update_incident(
     db.commit()
     db.refresh(incident)
     _clear_incident_detail_cache(db, tenant_id=tenant_id, incident_id=incident_id)
+    if "status" in changes:
+        invalidate_tenant_cache(tenant_id)
     return incident
 
 

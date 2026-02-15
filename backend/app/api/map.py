@@ -350,6 +350,8 @@ def map_summary(
 ):
     tenant = _resolve_tenant(db, ctx.tenant_id)
     tenant_id = tenant.id
+    requested_from_ts = from_ts
+    requested_to_ts = to_ts
     include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     category = _normalize_category(category)
     entitlements = resolve_effective_entitlements(db, tenant_id)
@@ -363,8 +365,6 @@ def map_summary(
     clamp_limits["geo_history_days"] = max_geo_days
     clamp_result = clamp_range({"limits": clamp_limits}, "geo_history_days", from_ts, to_ts)
     from_ts, to_ts = clamp_result.from_ts, clamp_result.to_ts
-    if bucket_start:
-        bucket_start = _normalize_ts(bucket_start)
 
     with trace_span(
         "map.summary",
@@ -378,8 +378,10 @@ def map_summary(
             tenant_id=tenant_id,
             db_scope=db_scope_id(db),
             filters={
-                "from": from_ts,
-                "to": to_ts,
+                # Cache by caller-selected range rather than clamped now() bounds.
+                # This keeps keys stable for repeated requests with identical params.
+                "from": requested_from_ts,
+                "to": requested_to_ts,
                 "website_id": website_id,
                 "env_id": env_id,
                 "category": category,
@@ -493,6 +495,8 @@ def map_drilldown(
 ):
     tenant = _resolve_tenant(db, ctx.tenant_id)
     tenant_id = tenant.id
+    requested_from_ts = from_ts
+    requested_to_ts = to_ts
     include_demo = bool(include_demo and tenant.is_demo_mode and not settings.LAUNCH_MODE)
     category = _normalize_category(category)
     entitlements = resolve_effective_entitlements(db, tenant_id)
@@ -519,8 +523,8 @@ def map_drilldown(
             tenant_id=tenant_id,
             db_scope=db_scope_id(db),
             filters={
-                "from": from_ts,
-                "to": to_ts,
+                "from": requested_from_ts,
+                "to": requested_to_ts,
                 "website_id": website_id,
                 "env_id": env_id,
                 "category": category,

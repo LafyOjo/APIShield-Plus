@@ -145,3 +145,58 @@ def test_create_rule_enforces_entitlement_limits():
         json={"name": "Secondary", "trigger_type": "incident_created"},
     )
     assert second.status_code == 402
+
+
+def test_notification_rule_update_invalidates_tenant_cache(monkeypatch):
+    db_url = f"sqlite:///./notification_rules_cache_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+
+    with SessionLocal() as db:
+        plan = Plan(
+            name="CachePlan",
+            price_monthly=249,
+            limits_json={"notification_rules": 10},
+            features_json={},
+            is_active=True,
+        )
+        db.add(plan)
+        db.commit()
+        db.refresh(plan)
+
+        owner = create_user(db, username="owner-cache-rule", password_hash=get_password_hash("pw"))
+        tenant, _ = create_tenant_with_owner(
+            db,
+            name="RuleCacheTenant",
+            slug=None,
+            owner_user=owner,
+            plan=plan,
+        )
+        set_tenant_plan(db, tenant.id, plan.id)
+        db.commit()
+        tenant_slug = tenant.slug
+        tenant_id = tenant.id
+
+    token = _login("owner-cache-rule", tenant_slug)
+    create_resp = client.post(
+        "/api/v1/notifications/rules",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_slug},
+        json={"name": "Initial Rule", "trigger_type": "incident_created"},
+    )
+    assert create_resp.status_code == 200
+    rule_id = create_resp.json()["id"]
+
+    invalidated: list[int] = []
+
+    def _capture_invalidation(value: int) -> int:
+        invalidated.append(value)
+        return 1
+
+    monkeypatch.setattr("app.api.notifications.invalidate_tenant_cache", _capture_invalidation)
+
+    update_resp = client.patch(
+        f"/api/v1/notifications/rules/{rule_id}",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_slug},
+        json={"name": "Updated Rule Name"},
+    )
+    assert update_resp.status_code == 200
+    assert invalidated == [tenant_id]

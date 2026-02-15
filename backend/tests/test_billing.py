@@ -3,6 +3,8 @@ import os
 import time
 import hmac
 import hashlib
+import sys
+import types
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -14,6 +16,54 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///./test.db")
 os.environ.setdefault("SECRET_KEY", "secret")
 os.environ.setdefault("SKIP_MIGRATIONS", "1")
 
+
+if "stripe" not in sys.modules:
+    class _SignatureVerificationError(Exception):
+        pass
+
+    class _Webhook:
+        @staticmethod
+        def construct_event(payload, sig_header, secret):
+            if isinstance(payload, (bytes, bytearray)):
+                payload_str = payload.decode("utf-8")
+            else:
+                payload_str = str(payload)
+            parts = {}
+            for piece in str(sig_header or "").split(","):
+                if "=" not in piece:
+                    continue
+                key, value = piece.split("=", 1)
+                parts[key.strip()] = value.strip()
+            ts = parts.get("t")
+            sig = parts.get("v1")
+            if not ts or not sig:
+                raise _SignatureVerificationError("Invalid signature")
+            expected = hmac.new(
+                str(secret).encode("utf-8"),
+                f"{ts}.{payload_str}".encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
+            if not hmac.compare_digest(expected, sig):
+                raise _SignatureVerificationError("Signature mismatch")
+            return json.loads(payload_str)
+
+    stripe_stub = types.SimpleNamespace(
+        api_key=None,
+        checkout=types.SimpleNamespace(
+            Session=types.SimpleNamespace(
+                create=lambda **kwargs: SimpleNamespace(url="https://checkout.example/session")
+            )
+        ),
+        billing_portal=types.SimpleNamespace(
+            Session=types.SimpleNamespace(
+                create=lambda **kwargs: SimpleNamespace(url="https://portal.example/session")
+            )
+        ),
+        Webhook=_Webhook,
+        error=types.SimpleNamespace(SignatureVerificationError=_SignatureVerificationError),
+    )
+    sys.modules["stripe"] = stripe_stub
+
 from app.main import app
 import app.core.db as db_module
 import app.core.access_log as access_log_module
@@ -22,6 +72,8 @@ from app.core.config import settings
 from app.core.security import get_password_hash
 from app.crud.tenants import create_tenant_with_owner
 from app.crud.users import create_user
+from app.models.enums import MembershipStatusEnum, RoleEnum
+from app.models.memberships import Membership
 from app.models.plans import Plan
 from app.models.subscriptions import Subscription
 
@@ -177,3 +229,66 @@ def test_billing_webhook_rejects_invalid_signature():
         data=payload,
     )
     assert resp.status_code == 400
+
+
+def test_billing_status_returns_plan_and_permissions():
+    db_url = f"sqlite:///./billing_status_{uuid4().hex}.db"
+    SessionLocal = _setup_db(db_url)
+    with SessionLocal() as db:
+        free_plan = Plan(
+            name="Free",
+            price_monthly=0,
+            limits_json={},
+            features_json={},
+            is_active=True,
+        )
+        db.add(free_plan)
+        db.commit()
+
+        owner = create_user(db, username="owner_status", password_hash=get_password_hash("pw"))
+        tenant, _ = create_tenant_with_owner(db, name="Acme Status", slug=None, owner_user=owner, plan=free_plan)
+        db.commit()
+        tenant_slug = tenant.slug
+        tenant_id = tenant.id
+
+        viewer = create_user(db, username="viewer_status", password_hash=get_password_hash("pw"))
+        db.add(
+            Membership(
+                tenant_id=tenant_id,
+                user_id=viewer.id,
+                role=RoleEnum.VIEWER,
+                status=MembershipStatusEnum.ACTIVE,
+                created_by_user_id=owner.id,
+            )
+        )
+        db.commit()
+
+    settings.STRIPE_SECRET_KEY = "sk_test_status"
+    settings.STRIPE_WEBHOOK_SECRET = "whsec_status"
+    settings.STRIPE_PRICE_ID_PRO = "price_pro"
+
+    owner_token = _login("owner_status", tenant_slug)
+    owner_resp = client.get(
+        "/api/v1/billing/status",
+        headers={"Authorization": f"Bearer {owner_token}", "X-Tenant-ID": tenant_slug},
+    )
+    assert owner_resp.status_code == 200
+    owner_payload = owner_resp.json()
+    assert owner_payload["tenant_id"] == tenant_id
+    assert owner_payload["plan_key"] == "free"
+    assert owner_payload["plan_name"] == "Free"
+    assert owner_payload["can_manage_billing"] is True
+    assert owner_payload["stripe_configured"] is True
+    assert any(
+        option["plan_key"] == "pro" and option["checkout_available"] is True
+        for option in owner_payload["available_plans"]
+    )
+
+    viewer_token = _login("viewer_status", tenant_slug)
+    viewer_resp = client.get(
+        "/api/v1/billing/status",
+        headers={"Authorization": f"Bearer {viewer_token}", "X-Tenant-ID": tenant_slug},
+    )
+    assert viewer_resp.status_code == 200
+    viewer_payload = viewer_resp.json()
+    assert viewer_payload["can_manage_billing"] is False

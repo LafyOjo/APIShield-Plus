@@ -2611,3 +2611,67 @@ button[aria-disabled="true"] {
 .portfolio-notice {
   grid-column: 1 / -1;
 }
+
+/* Demo lab */
+.demo-lab-page {
+  display: grid;
+  gap: 12px;
+}
+
+.demo-lab-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.demo-lab-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.demo-lab-controls label {
+  margin-bottom: 0;
+}
+
+.demo-lab-controls select {
+  width: auto;
+  min-width: 160px;
+}
+
+.demo-lab-table-wrap {
+  overflow-x: auto;
+}
+
+.demo-lab-check-title {
+  font-weight: 700;
+}
+
+.demo-lab-preview {
+  margin-top: 8px;
+}
+
+.demo-lab-preview pre {
+  margin: 8px 0 0 0;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+  font-size: 12px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.demo-status-ok {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.demo-status-fail {
+  color: #991b1b;
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
